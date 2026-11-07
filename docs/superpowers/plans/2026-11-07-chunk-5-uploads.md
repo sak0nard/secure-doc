@@ -23,7 +23,7 @@
 
 **Spec:** `docs/superpowers/specs/2026-11-07-secure-doc-portal-design.md` (§5 documents; §6.3 submit; §6.4; §9 AC-2/3/4/5 rows)
 
-**Depends on chunks 3–4:** `resolveCustomerSession`, `endCustomerSession`, `CUSTOMER_COOKIE`, `ActionContext`, `appendAudit`, `issueTestLink`, and code-verify helpers in tests. Chunk 3's detail page gains a document list here. If names differ, use the landed ones and ledger a ruling.
+**Depends on chunks 3–4:** `resolveCustomerSession`, `endCustomerSession`, `CUSTOMER_COOKIE`, `ActionContext`, `appendAudit`, `createRequestVia` (with `documentTypes` and `linkId`, from chunk 4), `bodyText`, `auditAction`, and code-verify helpers in tests. Take every row lock before the first audit write in a transaction. Chunk 3's detail page gains a document list here. If names differ, use the landed ones and ledger a ruling.
 
 ## Global Constraints
 
@@ -202,7 +202,7 @@ evidence/*.md                            (modify)
   - Request detail page (`GET /requests/:id`): the "Documents" section lists each document (type label, original name, detected type, size, uploaded time, scan status) instead of "None yet".
 
 - [ ] **Step 1: Write failing tests** in `tests/uploads.test.ts` (`beforeEach(resetDb)`):
-  - Helper `verifiedSession(app)`: `issueTestLink` for payslip + photo_id, send a code, verify, and return `{ cs, token, requestId }`.
+  - Helper `verifiedSession(app)`: `createRequestVia(app, { documentTypes: ['payslip', 'photo_id'] })`, send a code, verify, and return `{ cs, token, requestId }`.
   - Helper `upload(app, cs, parts: { field, name, bytes, type? }[])`: builds a multipart `FormData` POST with the same-site Origin.
   - Tests:
     - `"AC-2: a valid link plus the correct code lets the customer upload a PDF"`:

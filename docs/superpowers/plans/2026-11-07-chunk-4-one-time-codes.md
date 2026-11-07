@@ -14,13 +14,23 @@
 
 **Spec:** `docs/superpowers/specs/2026-11-07-secure-doc-portal-design.md` (§5 otp_codes, customer_sessions, outbox; §6.2; §6.3; §7 customer routes)
 
-**Depends on chunk 3:**
+**Depends on chunk 3 (merged; use these exact names):**
 
-- `resolveLink`, `REFUSED_LINK_TEXT`, `ActionContext`, `maskMobile`
-- the `link.refused` audit pattern
-- the customer route file `src/web/routes/customer.tsx`
+- `src/modules/requests/links.ts`: `resolveLink(db, token, now) → LinkResolution`, `REFUSED_LINK_TEXT`, `tokenHashPrefix(tokenHash)`
+- `src/modules/audit/audit.ts`: `ActionContext = { actor; ip; now }`, `auditAction(tx, ctx, e)` (`appendAudit` with actor, IP and time from the context), `appendAudit`, `verifyChain`
+- `src/modules/requests/status.ts`: `maskMobile(e164)`
+- `src/web/routes/customer.tsx`: `customerRoutes(deps)` with `GET /u/:token` (the valid branch is a placeholder to replace) and `refusedLinkPage()`, which writes `link.refused`
+- `tests/helpers.ts`:
+  - `signIn(app, userId) → cookie`
+  - `createRequestVia(app, { banker?, customer?, cookie? }) → { requestId, token, cookie }` (default: Alice for Dana, payslip)
+  - `bodyText(res)`: decodes React's HTML escapes so tests can match wording like "don't"
+  - `post(app, path, Record | [key, value][], opts)`
 
-If chunk 3 landed different names or a test helper for "create a request and return its token", use those and ledger a ruling.
+**Chunk 3 notes to respect:**
+
+- **Register `/u/upload` explicitly.** Today it falls through to `/u/:token` and is refused as an unknown token.
+- **Lock order:** take every row lock (link or request) **before** the first `appendAudit` or `auditAction` in a transaction. The audit advisory lock comes last; otherwise transactions can deadlock.
+- **Mount order:** keep `customerRoutes` mounted before `requestRoutes` in `src/app.ts`, because `requireUser` is scoped inside `requestRoutes`.
 
 ## Global Constraints
 
@@ -78,7 +88,7 @@ src/modules/otp/sessions.ts         createCustomerSession, resolveCustomerSessio
 src/web/routes/customer.tsx         (modify) link page, POST code, POST verify, GET /u/upload placeholder
 src/web/routes/dev.tsx              GET /dev/outbox
 tests/otp-units.test.ts, tests/otp.test.ts
-tests/helpers.ts                    (modify) issueTestLink(), latestOutboxCode()
+tests/helpers.ts                    (modify) createRequestVia documentTypes + linkId, latestOutboxCode()
 evidence/*.md                       (modify)
 ```
 
@@ -128,7 +138,7 @@ evidence/*.md                       (modify)
   - `sendCode(tx: Tx, ctx: ActionContext, linkId: string, opts: { pepper: string; sms: SmsSender }): Promise<{ sent: true; maskedMobile: string } | { sent: false; reason: "limit" | "cooldown" }>`
     - Locks the link row, checks the limits, consumes earlier codes, inserts the new code hash, updates `codesSent` and `lastCodeSentAt`, sends, and writes the audit event.
   - Test helpers:
-    - `issueTestLink(app, banker = SEED.users.alice, customer = SEED.customers.dana): Promise<{ token: string; requestId: string; linkId: string }>`. Creates a request through `POST /requests`. Reuse chunk 3's equivalent if one exists.
+    - Extend `createRequestVia` with a `documentTypes?: DocumentType[]` option (default `['payslip']`) and add `linkId` to its result. The link id is found by `sha256Hex(token)`.
     - `latestOutboxCode(linkId): Promise<string | null>`. Pulls the 6 digits from the newest outbox body.
 
 **Pages:**
@@ -140,7 +150,7 @@ evidence/*.md                       (modify)
 - `POST /u/:token/code`, on success: 200 with `We sent a code to {maskedMobile}`, then the code form (`name="code"`, `inputmode="numeric"`, `autocomplete="one-time-code"`) POSTing to `/u/:token/verify`, plus a resend button.
 
 - [ ] **Step 1: Write failing tests** in `tests/otp.test.ts` (`beforeEach(resetDb)`; use an injected clock throughout):
-  - `"opening a valid link offers to text a code and sends nothing"`: GET → 200, contains `Text me a code` and `+••••••••••01`; the outbox has 0 rows.
+  - `"opening a valid link offers to text a code and sends nothing"`: GET → 200, contains `Text me a code` and `+•••••••••01`; the outbox has 0 rows.
   - `"requesting a code texts the mobile on the customer record"`:
     - POST code → 200. The outbox has one row with `toMobile "+61400000101"` and a body matching the SMS template.
     - The `otp_codes.codeHash` equals `hashCode(config.otpPepper, linkId, code)`.
