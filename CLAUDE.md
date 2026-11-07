@@ -45,4 +45,6 @@ Out of scope for the slice: the retention purge job (FR-15, but still record the
 
 All application code goes under `src/`. All tests go under `tests/`, never next to the code they test.
 
+Format with `bun fmt` before every commit; `bun fmt --check` must pass. The style is set in the `[fmt]` section of `bunfig.toml` (88-character lines, no semicolons, single quotes). Don't use Prettier or another formatter, and keep formatting-only changes in their own commit.
+
 Use the project skill `software-design-principles` (`.claude/skills/`) when planning or making code changes. It covers minimal layers and state, small verifiable units (failing test first, then the fix), and testing behaviour rather than implementation. Write tests against the acceptance criteria in `evidence/intent.md`.

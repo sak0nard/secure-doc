@@ -27,3 +27,12 @@ bun run services      # tests use the secure_doc_test database in the same conta
 bun test
 bun run typecheck
 ```
+
+## Format
+
+```bash
+bun fmt            # format everything
+bun fmt --check    # verify without writing
+```
+
+The style lives in the `[fmt]` section of `bunfig.toml`.
