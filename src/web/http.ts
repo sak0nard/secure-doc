@@ -18,7 +18,12 @@ const SAFE_METHODS = new Set(['GET', 'HEAD'])
 /** State-changing requests must come from our own origin (CSRF defence alongside SameSite=Strict). */
 export function originAllowed(request: Request, baseUrl: URL): boolean {
   if (SAFE_METHODS.has(request.method)) return true
-  return request.headers.get('origin') === baseUrl.origin
+  const origin = request.headers.get('origin')
+  if (origin === baseUrl.origin) return true
+  // Under Referrer-Policy: no-referrer, browsers send `Origin: null` even for
+  // same-site form posts. Fall back to Sec-Fetch-Site, which pages cannot forge.
+  const opaque = origin === null || origin === 'null'
+  return opaque && request.headers.get('sec-fetch-site') === 'same-origin'
 }
 
 type IpServer =

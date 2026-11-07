@@ -79,3 +79,33 @@ test('source IP behind a trusted proxy is the entry the proxy appended, not a cl
   expect(sourceIp(req, server, true)).toBe('203.0.113.9')
   expect(sourceIp(new Request('http://x/'), server, true)).toBe('192.0.2.5')
 })
+
+// Chrome sends `Origin: null` on same-site form posts when the page uses
+// Referrer-Policy: no-referrer, which every page here does.
+const browserPost = (fetchSite: string | null, origin: string | null = 'null') => {
+  const headers: Record<string, string> = {}
+  if (fetchSite !== null) headers['sec-fetch-site'] = fetchSite
+  return post(
+    testApp().app,
+    '/login',
+    { userId: '00000000-0000-4000-8000-00000000a11c' },
+    { origin, headers }
+  )
+}
+
+test('a real browser form post (Origin null, Sec-Fetch-Site same-origin) is accepted', async () => {
+  expect((await browserPost('same-origin')).status).toBe(303)
+})
+
+test('Origin null from another site is refused', async () => {
+  expect((await browserPost('cross-site')).status).toBe(403)
+  expect((await browserPost('same-site')).status).toBe(403)
+})
+
+test('Origin null without Sec-Fetch-Site is refused', async () => {
+  expect((await browserPost(null)).status).toBe(403)
+})
+
+test('a foreign Origin is refused even if Sec-Fetch-Site claims same-origin', async () => {
+  expect((await browserPost('same-origin', 'https://evil.example')).status).toBe(403)
+})

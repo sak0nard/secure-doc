@@ -62,7 +62,9 @@ These headers are on every response, including errors:
 Request forgery is blocked two ways:
 
 - Session cookies are `HttpOnly` and `SameSite=Strict`.
-- Every state-changing request must carry an `Origin` header matching `BASE_URL`. Without one it gets 403.
+- Every state-changing request must prove it came from the portal: an `Origin` header matching `BASE_URL`, or, when the browser sends `Origin: null`, a `Sec-Fetch-Site: same-origin` header. Anything else gets 403.
+  - Browsers send `Origin: null` on same-site form posts because every page sets `Referrer-Policy: no-referrer`, which we keep to protect link tokens.
+  - Pages cannot forge `Sec-Fetch-Site`, and a post from another site always arrives as `cross-site`.
 
 Request logs mask customer link tokens.
 

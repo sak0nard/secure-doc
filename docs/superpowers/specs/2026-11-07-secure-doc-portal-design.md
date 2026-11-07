@@ -195,7 +195,7 @@ Open ──(customer submits files)──▶ Received ──(banker or complianc
 
 - Customers never get a user session and have no route that returns document bytes.
 - **Denied:** respond 403 with a generic page, and write an audit event with `outcome = 'denied'` and the actor, target and IP. Covers AC-7.
-- **CSRF:** cookies are `SameSite=Strict`, and every state-changing POST checks that the `Origin` header matches `BASE_URL`. A missing or mismatched `Origin` is refused.
+- **CSRF:** cookies are `SameSite=Strict`, and every state-changing POST must prove it came from the portal. It is accepted when `Origin` matches `BASE_URL`, or when `Origin` is `null` or missing and `Sec-Fetch-Site` is `same-origin`. Anything else is refused with 403. The fallback is needed because, under `Referrer-Policy: no-referrer`, browsers send `Origin: null` even on same-site form posts. Pages cannot forge `Sec-Fetch-Site`.
 
 ### 6.6 Audit log (FR-13, FR-14)
 
