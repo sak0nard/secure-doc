@@ -6,11 +6,28 @@ export const SECURITY_HEADERS: Record<string, string> = {
   'cache-control': 'no-store',
 }
 
-/** Customer link tokens live in `/u/<token>`; `/u/upload` is a fixed page, not a token. */
+const TOKEN_SHAPE = /^[A-Za-z0-9_-]{43}$/
+
+/**
+ * Hides customer link tokens before a path is logged. Masks the segment after any
+ * `u` segment (except the fixed `upload` page) and any segment shaped like a token,
+ * so malformed paths such as `//u/<token>` or `/U/<token>` never leak one.
+ */
 export function maskTokens(path: string): string {
-  return path.replace(/^\/u\/([^/]+)/, (whole, segment: string) =>
-    segment === 'upload' ? whole : '/u/****'
-  )
+  const parts = path.split('/')
+  return parts
+    .map((part, i) => {
+      const afterU = i > 0 && parts[i - 1]!.toLowerCase() === 'u'
+      const hide =
+        TOKEN_SHAPE.test(part) || (afterU && part !== '' && part !== 'upload')
+      return hide ? '****' : part
+    })
+    .join('/')
+}
+
+/** Drizzle appends bound parameters (codes, hashes, mobiles) to its error messages. */
+export function withoutParams(message: string): string {
+  return message.split('\nparams:')[0]!
 }
 
 const SAFE_METHODS = new Set(['GET', 'HEAD'])

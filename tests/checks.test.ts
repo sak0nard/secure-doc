@@ -60,8 +60,20 @@ describe('upload checks', () => {
         ['payslip']
       )
       expect(r.ok).toBe(false)
-      if (!r.ok) expect(r.problems.map((p) => p.field)).toEqual([field])
+      if (!r.ok)
+        expect(r.problems.map((p) => p.field)).toEqual([
+          field === 'passport' ? '(other)' : field,
+        ])
     }
+  })
+
+  test('an unknown field name is never echoed back, whatever its length', () => {
+    const r = checkSubmission(
+      [file('payslip', 'p.pdf', pdf()), file('x'.repeat(100_000), 's.pdf', pdf())],
+      ['payslip']
+    )
+    expect(r.ok).toBe(false)
+    if (!r.ok) expect(r.problems.map((p) => p.field)).toEqual(['(other)'])
   })
 
   test('more than ten files are rejected', () => {

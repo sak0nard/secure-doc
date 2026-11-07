@@ -62,23 +62,25 @@ export function checkSubmission(
   if (files.length > MAX_FILES) problems.push({ reason: 'Too many files (at most 10)' })
   for (const f of files) {
     const before = problems.length
+    // Only known type names are echoed into problems (and so into the audit log).
+    const field = isDocumentType(f.field) ? f.field : '(other)'
     const documentType =
       isDocumentType(f.field) && requested.includes(f.field) ? f.field : null
     if (!documentType)
       problems.push({
-        field: f.field,
+        field,
         file: f.name,
         reason: 'not a requested document',
       })
     const detectedType = detectType(f.bytes)
     if (!detectedType)
       problems.push({
-        field: f.field,
+        field,
         file: f.name,
         reason: 'not a PDF, JPG or PNG file',
       })
     if (f.bytes.length > MAX_FILE_BYTES)
-      problems.push({ field: f.field, file: f.name, reason: 'larger than 10 MB' })
+      problems.push({ field, file: f.name, reason: 'larger than 10 MB' })
     if (problems.length === before && documentType && detectedType)
       accepted.push({ ...f, documentType, detectedType })
   }

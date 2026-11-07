@@ -1,7 +1,7 @@
 import { Elysia } from 'elysia'
 import type { Deps } from './deps'
 import { MAX_FILE_BYTES, MAX_FILES } from './modules/documents/checks'
-import { maskTokens, originAllowed, SECURITY_HEADERS } from './web/http'
+import { maskTokens, withoutParams, originAllowed, SECURITY_HEADERS } from './web/http'
 import { STYLESHEET } from './web/render'
 import { customerRoutes } from './web/routes/customer'
 import { devRoutes } from './web/routes/dev'
@@ -33,7 +33,7 @@ export function createApp(deps: Deps) {
       // Never show internals (SQL, parameters, stack) to the client; keep them in the server log.
       const path = maskTokens(new URL(request.url).pathname)
       deps.log(
-        `ERROR ${request.method} ${path}: ${error instanceof Error ? error.message : String(error)}`
+        `ERROR ${request.method} ${path}: ${withoutParams(error instanceof Error ? error.message : String(error))}`
       )
       set.status = 500
       return 'Something went wrong. Please try again.'

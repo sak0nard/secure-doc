@@ -109,3 +109,30 @@ test('Origin null without Sec-Fetch-Site is refused', async () => {
 test('a foreign Origin is refused even if Sec-Fetch-Site claims same-origin', async () => {
   expect((await browserPost('same-origin', 'https://evil.example')).status).toBe(403)
 })
+
+test('link tokens are masked even on malformed or oddly cased paths', () => {
+  const token = 'A'.repeat(20) + '-_' + 'b'.repeat(21) // 43 base64url characters
+  for (const path of [`//u/${token}`, `/u//${token}`, `/U/${token}`, `/x/${token}/y`]) {
+    expect(maskTokens(path)).not.toContain(token)
+  }
+  expect(maskTokens('/U/short-token')).toBe('/U/****')
+  expect(maskTokens('/requests/00000000-0000-4000-8000-00000000a11c')).toBe(
+    '/requests/00000000-0000-4000-8000-00000000a11c'
+  )
+})
+
+test('database error parameters never reach the error log', async () => {
+  const failingDb = {
+    select() {
+      throw new Error(
+        'Failed query: select "x" from "outbox"\nparams: Your code is 123456'
+      )
+    },
+  } as unknown as Deps['db']
+  const { app, logs } = testApp({ db: failingDb })
+  await get(app, '/', { cookie: 'sid=abc' })
+  await Bun.sleep(5) // the log hook runs after the response is sent
+  const all = logs.join('\n')
+  expect(all).toContain('Failed query: select "x" from "outbox"')
+  expect(all).not.toContain('123456')
+})
