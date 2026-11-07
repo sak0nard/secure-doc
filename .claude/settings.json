@@ -1,0 +1,7 @@
+{
+  "enabledPlugins": {
+    "code-review@anthropic-plugin-directory": true,
+    "security-guidance@anthropic-plugin-directory": true,
+    "typescript-lsp@claude-plugins-official": true
+  }
+}
