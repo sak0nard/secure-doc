@@ -3,7 +3,14 @@ import { z } from 'zod'
 import type { Deps } from '../../deps'
 import { type Action, authorise } from '../../modules/access/policy'
 import type { User } from '../../modules/access/sessions'
-import { type ActionContext, auditAction } from '../../modules/audit/audit'
+import {
+  type ActionContext,
+  type AuditRow,
+  type ChainResult,
+  auditAction,
+  listRequestEvents,
+  verifyChain,
+} from '../../modules/audit/audit'
 import { type DocumentSummary, listDocuments } from '../../modules/documents/documents'
 import {
   CHANGE_ALLOWED_FROM,
@@ -168,6 +175,67 @@ function detailPage(r: RequestDetail, docs: DocumentSummary[], user: User) {
       )}
       <h2>Documents</h2>
       <DocumentList docs={docs} />
+    </Layout>
+  )
+}
+
+const BREAK_REASONS: Record<Extract<ChainResult, { ok: false }>['reason'], string> = {
+  hash_mismatch: 'content edited',
+  link_mismatch: 'link broken',
+}
+
+const chainText = (c: ChainResult) =>
+  c.ok
+    ? `Chain intact (${c.count} events)`
+    : `Chain broken at event #${c.brokenAt} (${BREAK_REASONS[c.reason]})`
+
+const ACTOR_LABELS = { customer: 'Customer', system: 'System' } as const
+
+const actorLabel = (e: AuditRow) =>
+  e.actorType === 'user' ? (e.actorName ?? e.actorId) : ACTOR_LABELS[e.actorType]
+
+function auditPage(r: RequestDetail, events: AuditRow[], chain: ChainResult) {
+  return page(
+    <Layout title="Audit trail">
+      <p>
+        <a href={`/requests/${r.id}`}>Back to request</a>
+      </p>
+      <h1>Audit trail: request for {r.customer.name}</h1>
+      <p>
+        <strong>{chainText(chain)}</strong>
+      </p>
+      <table>
+        <thead>
+          <tr>
+            <th>#</th>
+            <th>Time</th>
+            <th>Actor</th>
+            <th>Action</th>
+            <th>Target</th>
+            <th>Outcome</th>
+            <th>Source IP</th>
+            <th>Detail</th>
+          </tr>
+        </thead>
+        <tbody>
+          {events.map((e) => (
+            <tr key={e.seq}>
+              <td>#{e.seq}</td>
+              <td>{e.at.toISOString()}</td>
+              <td>{actorLabel(e)}</td>
+              <td>{e.action}</td>
+              <td>
+                {e.targetType} {e.targetId}
+              </td>
+              <td>{e.outcome}</td>
+              <td>{e.sourceIp}</td>
+              <td>
+                <code>{JSON.stringify(e.detail)}</code>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
     </Layout>
   )
 }
@@ -345,5 +413,24 @@ export function requestRoutes(deps: Deps) {
         status: 303,
         headers: { location: `/requests/${req.id}` },
       })
+    })
+    .get('/requests/:id/audit', async ({ user, params, request, server }) => {
+      const found = await forRequest(params.id, 'audit.view', user!, request, server)
+      if ('refusal' in found) return found.refusal
+      const { req, ctx } = found
+      await deps.db.transaction((tx) =>
+        auditAction(tx, ctx, {
+          action: 'audit.viewed',
+          target: { type: 'request', id: req.id },
+          requestId: req.id,
+          outcome: 'success',
+        })
+      )
+      // The whole chain, not just this request's events: a break anywhere matters here.
+      const [events, chain] = await Promise.all([
+        listRequestEvents(deps.db, req.id),
+        verifyChain(deps.db),
+      ])
+      return auditPage(req, events, chain)
     })
 }

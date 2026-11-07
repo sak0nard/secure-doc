@@ -1,6 +1,6 @@
-import { asc, desc, sql } from 'drizzle-orm'
+import { and, asc, desc, eq, sql } from 'drizzle-orm'
 import type { Db, Tx } from '../../db/client'
-import { auditEvents } from '../../db/schema'
+import { auditEvents, users } from '../../db/schema'
 import { sha256Hex } from '../access/crypto'
 
 /** Every append takes this transaction-scoped advisory lock, so concurrent writers queue instead of forking the chain. */
@@ -105,6 +105,39 @@ export function auditAction(
   e: Omit<AuditInput, 'at' | 'actor' | 'sourceIp'>
 ) {
   return appendAudit(tx, { ...e, at: ctx.now, actor: ctx.actor, sourceIp: ctx.ip })
+}
+
+export type AuditRow = Omit<Row, 'prevHash' | 'hash' | 'requestId'> & {
+  /** The user's name for `user` actors; null for customers and the system. */
+  actorName: string | null
+}
+
+/** Every event about one request, oldest first, with user actors named. */
+export function listRequestEvents(db: Db | Tx, requestId: string): Promise<AuditRow[]> {
+  return db
+    .select({
+      seq: auditEvents.seq,
+      at: auditEvents.at,
+      actorType: auditEvents.actorType,
+      actorId: auditEvents.actorId,
+      actorName: users.name,
+      action: auditEvents.action,
+      targetType: auditEvents.targetType,
+      targetId: auditEvents.targetId,
+      outcome: auditEvents.outcome,
+      sourceIp: auditEvents.sourceIp,
+      detail: auditEvents.detail,
+    })
+    .from(auditEvents)
+    .leftJoin(
+      users,
+      and(
+        eq(auditEvents.actorType, 'user'),
+        sql`${users.id}::text = ${auditEvents.actorId}`
+      )
+    )
+    .where(eq(auditEvents.requestId, requestId))
+    .orderBy(asc(auditEvents.seq))
 }
 
 /** Walks the log in order and reports the first event whose link or content does not check out. */
