@@ -89,6 +89,17 @@ Reissuing moves an expired request back to a usable Open: it revokes the active 
 
 **Cost:** queries that filter on "expired" have to use the same expression rather than a simple column match.
 
+## D6. One file box per document type on the upload page
+
+**Decision:** the upload form has one file input per requested document type (each accepting several files), instead of a document-type dropdown beside each chosen file. The box a file comes through is its type.
+
+**Why:**
+
+- A dropdown per file needs script to add a row for each chosen file, and the content security policy allows no inline script (D1).
+- The outcome is the same: every file is tagged with a requested type, and the server still refuses a submission that leaves a requested type empty or sends a file under a type that was not requested.
+
+**Cost:** a customer who puts a file in the wrong box sends it under the wrong type; the banker sees the type and the file name and can ask again.
+
 ## Intentionally not built
 
 | Not built                                            | Why                                                                                         | Production path                                                                                    |
