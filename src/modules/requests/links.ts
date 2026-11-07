@@ -18,13 +18,18 @@ export type LinkResolution =
       requestId?: string
     }
 
-/** Finds the link for a raw token and says whether it can be used now, and if not, why. */
+/**
+ * Finds the link for a raw token and says whether it can be used now, and if not, why.
+ * With `lock`, holds the link's row lock until the transaction ends, so the answer stays
+ * true while the caller acts on it (take it before any audit write).
+ */
 export async function resolveLink(
   db: Db | Tx,
   token: string,
-  now: Date
+  now: Date,
+  opts: { lock?: boolean } = {}
 ): Promise<LinkResolution> {
-  const [link] = await db
+  const query = db
     .select({
       linkId: uploadLinks.id,
       requestId: uploadLinks.requestId,
@@ -33,6 +38,7 @@ export async function resolveLink(
     })
     .from(uploadLinks)
     .where(eq(uploadLinks.tokenHash, sha256Hex(token)))
+  const [link] = await (opts.lock ? query.for('update') : query)
   if (!link) return { ok: false, reason: 'unknown' }
   const { linkId, requestId, state, expiresAt } = link
   if (state !== 'active') return { ok: false, reason: state, linkId, requestId }

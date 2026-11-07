@@ -1,9 +1,13 @@
-import { sql } from 'drizzle-orm'
+import { desc, eq, sql } from 'drizzle-orm'
 import { loadConfig } from '../src/config'
 import { createDb, type Tx } from '../src/db/client'
+import { outbox, uploadLinks } from '../src/db/schema'
 import { SEED, seed } from '../src/db/seed'
 import { createApp } from '../src/app'
 import type { Deps } from '../src/deps'
+import { sha256Hex } from '../src/modules/access/crypto'
+import { outboxSms } from '../src/ports/sms'
+import type { DocumentType } from '../src/modules/requests/requests'
 
 export const config = loadConfig(process.env)
 export const ownerDb = createDb(config.databaseOwnerUrl)
@@ -44,6 +48,7 @@ export function testApp(overrides: Partial<Deps> = {}) {
   const deps: Deps = {
     config,
     db: appDb,
+    sms: outboxSms,
     now: () => new Date(),
     log: (l) => logs.push(l),
     ...overrides,
@@ -118,19 +123,25 @@ export function linkToken(html: string): string | null {
 
 /**
  * Creates a request through the HTTP flow (default: Alice for Dana, one payslip) and
- * returns its id and the raw link token taken from the show-once page.
+ * returns its id, the raw link token taken from the show-once page, and the link's id.
  */
 export async function createRequestVia(
   app: App,
-  opts: { banker?: string; customer?: string; cookie?: string } = {}
-): Promise<{ requestId: string; token: string; cookie: string }> {
+  opts: {
+    banker?: string
+    customer?: string
+    cookie?: string
+    documentTypes?: DocumentType[]
+  } = {}
+): Promise<{ requestId: string; token: string; linkId: string; cookie: string }> {
   const cookie = opts.cookie ?? (await signIn(app, opts.banker ?? SEED.users.alice))
+  const types = opts.documentTypes ?? ['payslip']
   const res = await post(
     app,
     '/requests',
     [
       ['customerId', opts.customer ?? SEED.customers.dana],
-      ['documentTypes', 'payslip'],
+      ...types.map((t): [string, string] => ['documentTypes', t]),
     ],
     { cookie }
   )
@@ -139,5 +150,20 @@ export async function createRequestVia(
   const requestId = html.match(/href="\/requests\/([0-9a-f-]{36})"/)?.[1]
   if (res.status !== 200 || !token || !requestId)
     throw new Error(`create failed: ${res.status}`)
-  return { requestId, token, cookie }
+  const [link] = await appDb
+    .select({ id: uploadLinks.id })
+    .from(uploadLinks)
+    .where(eq(uploadLinks.tokenHash, sha256Hex(token)))
+  return { requestId, token, linkId: link!.id, cookie }
+}
+
+/** The 6-digit code in the newest mock SMS for a link, as the customer's phone shows it. */
+export async function latestOutboxCode(linkId: string): Promise<string | null> {
+  const [row] = await appDb
+    .select({ body: outbox.body })
+    .from(outbox)
+    .where(eq(outbox.linkId, linkId))
+    .orderBy(desc(outbox.createdAt))
+    .limit(1)
+  return row?.body.match(/\b(\d{6})\b/)?.[1] ?? null
 }
