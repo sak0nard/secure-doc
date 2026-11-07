@@ -1,2 +1,10 @@
 [test]
 preload = ["./tests/setup.ts"]
+
+[fmt]
+printWidth = 88
+tabWidth = 2
+useTabs = false
+semi = false
+singleQuote = true
+trailingComma = "es5"

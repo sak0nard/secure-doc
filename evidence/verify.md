@@ -12,20 +12,22 @@ The tests run against real Postgres and RustFS in Docker, not in-memory fakes. T
 
 ## Latest results
 
-| Check | Result |
-| --- | --- |
-| `bun test` | 46 pass, 0 fail (5 files, 104 assertions) |
-| `bun run typecheck` | No type errors |
+| Check               | Result                                    |
+| ------------------- | ----------------------------------------- |
+| `bun test`          | 46 pass, 0 fail (5 files, 104 assertions) |
+| `bun run typecheck` | No type errors                            |
 
 ## What the tests prove so far
 
 **Configuration** (`tests/config.test.ts`)
+
 - Defaults: 2555-day retention, proxy headers not trusted, mock outbox off, port 3000.
 - A one-time-code secret shorter than 32 characters is rejected.
 - Every invalid variable is reported at once, not just the first.
 - Booleans accept only `true` or `false`.
 
 **Database protections** (`tests/db.test.ts`)
+
 - The app's database role can insert and read audit events.
 - The app's role is denied updates and deletes on audit events (Postgres reports "permission denied").
 - A trigger blocks even the owner from editing or deleting audit events.
@@ -33,6 +35,7 @@ The tests run against real Postgres and RustFS in Docker, not in-memory fakes. T
 - Seeding twice leaves the same rows; seeded roles are correct.
 
 **HTTP hardening** (`tests/http.test.ts`)
+
 - The four security headers are on every response, including 404s and errors.
 - Link tokens are masked in request logs.
 - POSTs without an `Origin` header, or from another origin, are refused with 403.
@@ -40,6 +43,7 @@ The tests run against real Postgres and RustFS in Docker, not in-memory fakes. T
 - The client IP ignores `X-Forwarded-For` unless the proxy is trusted. When it is trusted, the IP comes from the entry the proxy appended, not from a value the client supplied.
 
 **Audit chain** (`tests/audit.test.ts`)
+
 - Canonical JSON sorts keys at every depth.
 - An empty log verifies.
 - The first event links to the genesis hash (64 zeros).
@@ -53,6 +57,7 @@ The tests run against real Postgres and RustFS in Docker, not in-memory fakes. T
 - Deleting an event is detected at the next event (AC-9).
 
 **Sign-in and sessions** (`tests/login.test.ts`)
+
 - Sign-in sets an `HttpOnly`, `SameSite=Strict` cookie and lands on the home page.
 - Only the SHA-256 of the session token is stored.
 - Missing, garbage, malformed or expired session cookies are treated as signed out, never as an error.
@@ -67,16 +72,16 @@ The tests run against real Postgres and RustFS in Docker, not in-memory fakes. T
 
 ## Acceptance criteria
 
-| Acceptance criterion | Status |
-| --- | --- |
-| A banker creates a request and sees the upload link exactly once | Not yet built |
-| A valid link plus the correct code lets the customer upload a PDF | Not yet built |
-| A renamed executable with a .pdf extension is rejected | Not yet built |
-| A file over 10 MB is rejected | Not yet built |
-| A used, expired or reissued link is refused | Not yet built (the one-active-link rule is enforced and tested) |
-| Five wrong codes lock the link and log a suspicious-activity event | Not yet built |
-| Another banker gets access denied, and the attempt is logged | Not yet built |
-| Compliance can view the document and the full audit trail | Not yet built |
+| Acceptance criterion                                                     | Status                                                                                                                                                      |
+| ------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| A banker creates a request and sees the upload link exactly once         | Not yet built                                                                                                                                               |
+| A valid link plus the correct code lets the customer upload a PDF        | Not yet built                                                                                                                                               |
+| A renamed executable with a .pdf extension is rejected                   | Not yet built                                                                                                                                               |
+| A file over 10 MB is rejected                                            | Not yet built                                                                                                                                               |
+| A used, expired or reissued link is refused                              | Not yet built (the one-active-link rule is enforced and tested)                                                                                             |
+| Five wrong codes lock the link and log a suspicious-activity event       | Not yet built                                                                                                                                               |
+| Another banker gets access denied, and the attempt is logged             | Not yet built                                                                                                                                               |
+| Compliance can view the document and the full audit trail                | Not yet built                                                                                                                                               |
 | Editing or deleting an audit event breaks the hash chain and is detected | Met: "AC-9: editing an audit event is detected", "AC-9: editing an event and recomputing its hash is detected", "AC-9: deleting an audit event is detected" |
 
 Each criterion will get its own named test.
@@ -94,13 +99,13 @@ Each criterion will get its own named test.
 
 ## Local versus pipeline
 
-| Check | Locally | In a pull request pipeline |
-| --- | --- | --- |
-| Type check | `bun run typecheck` | Yes |
-| Unit and integration tests | `bun test` against Docker services | Yes, with Postgres and RustFS as job services |
-| Migrations apply cleanly from empty | Implicit in `bun test` | Yes, plus a check that the generated migrations match the schema (`drizzle-kit generate` produces no diff) |
-| Dependency vulnerability audit | Optional | Yes, failing on high severity |
-| Secret scanning | Optional | Yes, on every push |
-| Static analysis for security (SAST) | — | Yes |
-| Container image scan | — | Yes, on the release image |
-| Browser smoke test of the main journey | Optional (Playwright) | Yes, against a deployed preview |
+| Check                                  | Locally                            | In a pull request pipeline                                                                                 |
+| -------------------------------------- | ---------------------------------- | ---------------------------------------------------------------------------------------------------------- |
+| Type check                             | `bun run typecheck`                | Yes                                                                                                        |
+| Unit and integration tests             | `bun test` against Docker services | Yes, with Postgres and RustFS as job services                                                              |
+| Migrations apply cleanly from empty    | Implicit in `bun test`             | Yes, plus a check that the generated migrations match the schema (`drizzle-kit generate` produces no diff) |
+| Dependency vulnerability audit         | Optional                           | Yes, failing on high severity                                                                              |
+| Secret scanning                        | Optional                           | Yes, on every push                                                                                         |
+| Static analysis for security (SAST)    | —                                  | Yes                                                                                                        |
+| Container image scan                   | —                                  | Yes, on the release image                                                                                  |
+| Browser smoke test of the main journey | Optional (Playwright)              | Yes, against a deployed preview                                                                            |

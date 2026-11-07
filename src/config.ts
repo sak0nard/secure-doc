@@ -1,6 +1,9 @@
-import { z } from "zod";
+import { z } from 'zod'
 
-const bool = z.enum(["true", "false"]).default("false").transform((v) => v === "true");
+const bool = z
+  .enum(['true', 'false'])
+  .default('false')
+  .transform((v) => v === 'true')
 
 const schema = z.object({
   DATABASE_URL: z.string().min(1),
@@ -11,36 +14,42 @@ const schema = z.object({
   S3_SECRET_ACCESS_KEY: z.string().min(1),
   S3_REGION: z.string().min(1),
   BASE_URL: z.url(),
-  OTP_PEPPER: z.string().min(32, "must be at least 32 characters"),
+  OTP_PEPPER: z.string().min(32, 'must be at least 32 characters'),
   RETENTION_DAYS: z.coerce.number().int().positive().default(2555),
   TRUST_PROXY: bool,
   MOCK_OUTBOX_ENABLED: bool,
   PORT: z.coerce.number().int().min(1).max(65535).default(3000),
-});
+})
 
 export type Config = {
-  databaseUrl: string;
-  databaseOwnerUrl: string;
-  s3: { endpoint: string; bucket: string; accessKeyId: string; secretAccessKey: string; region: string };
-  baseUrl: URL;
-  otpPepper: string;
-  retentionDays: number;
-  trustProxy: boolean;
-  mockOutboxEnabled: boolean;
-  port: number;
-};
+  databaseUrl: string
+  databaseOwnerUrl: string
+  s3: {
+    endpoint: string
+    bucket: string
+    accessKeyId: string
+    secretAccessKey: string
+    region: string
+  }
+  baseUrl: URL
+  otpPepper: string
+  retentionDays: number
+  trustProxy: boolean
+  mockOutboxEnabled: boolean
+  port: number
+}
 
 export class ConfigError extends Error {
-  override name = "ConfigError";
+  override name = 'ConfigError'
 }
 
 export function loadConfig(env: Record<string, string | undefined>): Config {
-  const parsed = schema.safeParse(env);
+  const parsed = schema.safeParse(env)
   if (!parsed.success) {
-    const lines = parsed.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`);
-    throw new ConfigError(`Invalid configuration:\n${lines.join("\n")}`);
+    const lines = parsed.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`)
+    throw new ConfigError(`Invalid configuration:\n${lines.join('\n')}`)
   }
-  const e = parsed.data;
+  const e = parsed.data
   return {
     databaseUrl: e.DATABASE_URL,
     databaseOwnerUrl: e.DATABASE_OWNER_URL,
@@ -57,5 +66,5 @@ export function loadConfig(env: Record<string, string | undefined>): Config {
     trustProxy: e.TRUST_PROXY,
     mockOutboxEnabled: e.MOCK_OUTBOX_ENABLED,
     port: e.PORT,
-  };
+  }
 }

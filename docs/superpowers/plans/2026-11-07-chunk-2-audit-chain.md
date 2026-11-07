@@ -5,6 +5,7 @@
 **Goal:** A hash-chained, append-only audit log that every later action writes to, a verifier that finds the first broken event, and sign-in/sign-out as the first audited actions.
 
 **Architecture:** `src/modules/audit/audit.ts` owns three things: the chain format (canonical JSON + SHA-256), `appendAudit(tx, event)` and `verifyChain(db)`.
+
 - **Atomic writes:** appends take a Postgres transaction-scoped advisory lock, so concurrent writers queue instead of forking the chain. The event commits or rolls back with the action it records.
 - **Stored time is hashed time:** the timestamp is generated in app code, so the value that is hashed equals the value stored.
 
@@ -29,11 +30,11 @@
 
 ## Review Focus
 
-1. **Many requests auditing at the same moment** must still produce one unbroken chain. *Task 1 test: 25 concurrent appends.*
-2. **`detail` with keys in any order, nested objects or numbers** must verify after a round trip through `jsonb`, which reorders keys. *Task 1 test.*
-3. **An action that fails after writing its audit event** must leave no event. *Task 1 rollback test.*
-4. **A failed sign-in** (unknown user) is still audited, with no session created. *Task 2 test.*
-5. **The client IP behind a trusted proxy** is the one recorded in the event. *Task 2 test.*
+1. **Many requests auditing at the same moment** must still produce one unbroken chain. _Task 1 test: 25 concurrent appends._
+2. **`detail` with keys in any order, nested objects or numbers** must verify after a round trip through `jsonb`, which reorders keys. _Task 1 test._
+3. **An action that fails after writing its audit event** must leave no event. _Task 1 rollback test._
+4. **A failed sign-in** (unknown user) is still audited, with no session created. _Task 2 test._
+5. **The client IP behind a trusted proxy** is the one recorded in the event. _Task 2 test._
 
 ---
 
@@ -53,11 +54,13 @@ evidence/*.md                  (modify) record what is now built
 ### Task 1: Append and verify the chain
 
 **Files:**
+
 - Create: `src/modules/audit/audit.ts`
 - Modify: `tests/helpers.ts`
 - Test: `tests/audit.test.ts`
 
 **Interfaces:**
+
 - Consumes: `Db`, `Tx` (`src/db/client.ts`), `auditEvents` (`src/db/schema.ts`), `sha256Hex` (`src/modules/access/crypto.ts`).
 - Produces:
   - `type AuditInput = { at: Date; actor: { type: "user" | "customer" | "system"; id: string }; action: string; target: { type: string; id: string }; requestId?: string; sourceIp: string; outcome: "success" | "failure" | "denied" | "suspicious"; detail?: Record<string, unknown> }`
@@ -89,7 +92,7 @@ for row in audit_events order by seq:
   - `"concurrent appends never fork the chain"`: `Promise.all` of 25 `append` calls → `verifyChain` → `{ ok: true, count: 25 }`, and the 25 `prevHash` values are all distinct.
   - `"a rolled-back action leaves no audit event"`: inside `appDb.transaction`, append, then throw → the transaction rejects, and `audit_events` has 0 rows.
   - `"AC-9: editing an audit event is detected"`: append 3. Then `tamperAsOwner` updates the `detail` of `seq 2` to `{ edited: true }` → `verifyChain` → `{ ok: false, brokenAt: 2, reason: "hash_mismatch", count: 2 }`.
-  - `"AC-9: editing an event and recomputing its hash is detected"`: append 3. `tamperAsOwner` sets `seq 2`'s `outcome` to `"failure"` **and** its `hash` to a recomputed value → `{ ok: false, brokenAt: 3, reason: "link_mismatch" }`. *(For the recomputed hash, use the exported `canonicalJson` and `sha256Hex` with the same field list as the Global Constraints.)*
+  - `"AC-9: editing an event and recomputing its hash is detected"`: append 3. `tamperAsOwner` sets `seq 2`'s `outcome` to `"failure"` **and** its `hash` to a recomputed value → `{ ok: false, brokenAt: 3, reason: "link_mismatch" }`. _(For the recomputed hash, use the exported `canonicalJson` and `sha256Hex` with the same field list as the Global Constraints.)_
   - `"AC-9: deleting an audit event is detected"`: append 3; `tamperAsOwner` deletes `seq 2` → `{ ok: false, brokenAt: 3, reason: "link_mismatch" }`.
 - [ ] **Step 2: Run** `bun test tests/audit.test.ts`. Expected: FAIL (module missing).
 - [ ] **Step 3: Implement** in `src/modules/audit/audit.ts`.
@@ -107,10 +110,12 @@ for row in audit_events order by seq:
 ### Task 2: Audit sign-in and sign-out
 
 **Files:**
+
 - Modify: `src/web/routes/login.tsx`, `tests/helpers.ts` (`headers?: Record<string,string>` option on `get`/`post`)
 - Test: `tests/login.test.ts`
 
 **Interfaces:**
+
 - Consumes: `appendAudit`, `sourceIp(request, server, trustProxy)` (`src/web/http.ts`), `createUserSession`, `endUserSession`, `resolveUserSession`.
 - Produces: audit actions `user.signed_in`, `user.sign_in_failed`, `user.signed_out`, the pattern later chunks copy. That pattern:
   1. Compute `ip = sourceIp(request, server, deps.config.trustProxy)` in the route.
@@ -120,11 +125,11 @@ for row in audit_events order by seq:
 
 **Event shapes:**
 
-| Action | Actor | Target | Outcome |
-| --- | --- | --- | --- |
-| `user.signed_in` | `user`, signed-in id | `user`, same id | `success` |
-| `user.sign_in_failed` | `user`, `"anonymous"` | `user`, the submitted id if it is a valid UUID, else `"invalid"` | `failure` |
-| `user.signed_out` | `user`, the id of the session being ended | `user`, same id | `success` |
+| Action                | Actor                                     | Target                                                           | Outcome   |
+| --------------------- | ----------------------------------------- | ---------------------------------------------------------------- | --------- |
+| `user.signed_in`      | `user`, signed-in id                      | `user`, same id                                                  | `success` |
+| `user.sign_in_failed` | `user`, `"anonymous"`                     | `user`, the submitted id if it is a valid UUID, else `"invalid"` | `failure` |
+| `user.signed_out`     | `user`, the id of the session being ended | `user`, same id                                                  | `success` |
 
 A sign-out with no valid session writes no event.
 
@@ -138,7 +143,7 @@ A sign-out with no valid session writes no event.
 - [ ] **Step 3: Implement.**
   - **Sign-in:** wrap `createUserSession` and `appendAudit` in one transaction.
   - **Failed sign-in:** write its event in its own transaction before returning 400.
-  - **Sign-out:** to learn the actor, `resolveUserSession` runs *before* `endUserSession`. Both, plus the append, go in one transaction.
+  - **Sign-out:** to learn the actor, `resolveUserSession` runs _before_ `endUserSession`. Both, plus the append, go in one transaction.
   - **Client IP:** Elysia exposes `server` on the handler context. Under `app.handle` it's `null`, and `sourceIp` already returns `"unknown"`.
 - [ ] **Step 4: Run** `bun test && bun run typecheck`. Expected: all PASS, no errors.
 - [ ] **Step 5: Commit**: `git commit -m "feat: audit sign-in, failed sign-in and sign-out"`
@@ -148,10 +153,11 @@ A sign-out with no valid session writes no event.
 ### Task 3: Evidence
 
 **Files:**
+
 - Modify: `evidence/design.md`, `evidence/verify.md`, `evidence/decisions.md`, `evidence/operate.md`
 
 - [ ] **Step 1: `design.md`**
-  - Security table: the "Audit tampering" row becomes *Built*, naming the chain format.
+  - Security table: the "Audit tampering" row becomes _Built_, naming the chain format.
   - Add a short "Audit chain" subsection:
     - the hashed fields
     - genesis
@@ -162,7 +168,7 @@ A sign-out with no valid session writes no event.
 - [ ] **Step 2: `verify.md`**
   - Update the results to real numbers from `bun test`.
   - Add an "Audit chain" group listing the Task 1 tests, and sign-in auditing under "Sign-in and sessions".
-  - Mark the AC-9 row *Met*, naming its three tests.
+  - Mark the AC-9 row _Met_, naming its three tests.
 - [ ] **Step 3: `decisions.md` D3.** Add one line: verification reports the first broken event and why (edited content vs a broken link), and tamper tests simulate a privileged attacker without weakening the trigger.
 - [ ] **Step 4: `operate.md`.** Under Logs, add that who-did-what is in `audit_events`, plus one `psql` query to read a request's events in order.
 - [ ] **Step 5: Commit**: `git commit -m "docs: record the audit chain in evidence"`

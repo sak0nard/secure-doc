@@ -28,16 +28,15 @@ Today bankers email customers for payslips, bank statements and ID, and customer
 - Customer-initiated uploads without a banker request.
 - Replacing the bank's records management or core banking systems.
 
-
 ## Users and personas
 
-| Persona | Needs | Access |
-| --- | --- | --- |
-| Banker (requester) | Request documents quickly, see status, reissue a link | Create requests; view documents on their own requests |
-| Customer | Upload easily from a phone without creating an account | Upload only, through a verified link; cannot view documents after upload |
-| Compliance officer | Review documents and the full audit trail | View all documents and audit events; cannot create requests |
-| Other banker | None for this request | No access; attempts are blocked and logged |
-| System (retention job) | Delete expired documents | Delete files; writes audit events |
+| Persona                | Needs                                                  | Access                                                                   |
+| ---------------------- | ------------------------------------------------------ | ------------------------------------------------------------------------ |
+| Banker (requester)     | Request documents quickly, see status, reissue a link  | Create requests; view documents on their own requests                    |
+| Customer               | Upload easily from a phone without creating an account | Upload only, through a verified link; cannot view documents after upload |
+| Compliance officer     | Review documents and the full audit trail              | View all documents and audit events; cannot create requests              |
+| Other banker           | None for this request                                  | No access; attempts are blocked and logged                               |
+| System (retention job) | Delete expired documents                               | Delete files; writes audit events                                        |
 
 ## User journeys
 
@@ -62,25 +61,25 @@ Today bankers email customers for payslips, bank statements and ID, and customer
 
 ## Functional requirements
 
-| ID | Requirement | Priority |
-| --- | --- | --- |
-| FR-1 | A banker can create a request for a customer, selecting one or more document types. | Must |
-| FR-2 | The system generates a random single-use upload token and shows the link to the banker once. | Must |
-| FR-3 | The link expires 72 hours after issue, or immediately after a successful upload session ends (files submitted). | Must |
-| FR-4 | A banker can reissue a link; issuing a new link revokes the previous one. | Must |
-| FR-5 | Opening a valid link triggers a 6-digit one-time code sent to the mobile number on the customer record. | Must |
-| FR-6 | The code expires after 5 minutes; 5 wrong attempts lock the link. | Must |
-| FR-7 | Code resends are rate-limited (for example, 3 per link). | Should |
-| FR-8 | A verified customer can upload PDF, JPG or PNG files up to 10 MB each. | Must |
-| FR-9 | File type is checked by content (magic bytes), not only by extension. | Must |
-| FR-10 | Each stored file gets a random internal name, a SHA-256 hash and a retention date. | Must |
-| FR-11 | Request status moves through Open, Received, Closed, Cancelled or Expired. | Must |
-| FR-12 | The requesting banker and compliance officers can view and download documents; no one else can. | Must |
-| FR-13 | Every action writes an audit event: actor, action, target, time, source IP and outcome. | Must |
-| FR-14 | Compliance officers can view the audit trail for any request. | Must |
-| FR-15 | A scheduled job deletes documents past their retention date and logs each deletion. | Must |
-| FR-16 | The banker is notified when a customer completes an upload. | Should |
-| FR-17 | Uploaded files pass through a malware-scanning hook before becoming viewable. | Should |
+| ID    | Requirement                                                                                                     | Priority |
+| ----- | --------------------------------------------------------------------------------------------------------------- | -------- |
+| FR-1  | A banker can create a request for a customer, selecting one or more document types.                             | Must     |
+| FR-2  | The system generates a random single-use upload token and shows the link to the banker once.                    | Must     |
+| FR-3  | The link expires 72 hours after issue, or immediately after a successful upload session ends (files submitted). | Must     |
+| FR-4  | A banker can reissue a link; issuing a new link revokes the previous one.                                       | Must     |
+| FR-5  | Opening a valid link triggers a 6-digit one-time code sent to the mobile number on the customer record.         | Must     |
+| FR-6  | The code expires after 5 minutes; 5 wrong attempts lock the link.                                               | Must     |
+| FR-7  | Code resends are rate-limited (for example, 3 per link).                                                        | Should   |
+| FR-8  | A verified customer can upload PDF, JPG or PNG files up to 10 MB each.                                          | Must     |
+| FR-9  | File type is checked by content (magic bytes), not only by extension.                                           | Must     |
+| FR-10 | Each stored file gets a random internal name, a SHA-256 hash and a retention date.                              | Must     |
+| FR-11 | Request status moves through Open, Received, Closed, Cancelled or Expired.                                      | Must     |
+| FR-12 | The requesting banker and compliance officers can view and download documents; no one else can.                 | Must     |
+| FR-13 | Every action writes an audit event: actor, action, target, time, source IP and outcome.                         | Must     |
+| FR-14 | Compliance officers can view the audit trail for any request.                                                   | Must     |
+| FR-15 | A scheduled job deletes documents past their retention date and logs each deletion.                             | Must     |
+| FR-16 | The banker is notified when a customer completes an upload.                                                     | Should   |
+| FR-17 | Uploaded files pass through a malware-scanning hook before becoming viewable.                                   | Should   |
 
 ## Security and compliance requirements
 
@@ -88,18 +87,17 @@ The design uses layered controls: hashing protects secrets at rest, TLS protects
 
 **Threat model**
 
-| Threat | Control |
-| --- | --- |
-| Database leak exposes live upload links | Tokens and one-time codes are stored only as SHA-256 hashes; raw tokens are never retrievable. |
-| Network interception (man-in-the-middle) | TLS everywhere, HSTS, no plain-HTTP endpoints. |
-| Link intercepted via compromised email or forwarding | One-time code sent to a separate channel already on file; never to the channel that carried the link. |
-| Brute-forcing tokens or codes | Long random tokens; code lockout after 5 attempts; rate limiting on link and code endpoints. |
-| Token leaked via browser referrer or logs | `Referrer-Policy: no-referrer`; tokens masked in application logs. |
-| Malicious file upload | Allow-list of types checked by content; size limit; malware-scan hook; files stored outside the web root and never executed. |
-| Insider viewing documents without a need | Role-based access scoped to the requesting banker and compliance; every view logged. |
-| Audit log tampering | Append-only log; each event carries the hash of the previous one so gaps or edits are detectable. |
-| Data kept longer than needed | Retention date on every file; automatic, logged deletion. |
-
+| Threat                                               | Control                                                                                                                      |
+| ---------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| Database leak exposes live upload links              | Tokens and one-time codes are stored only as SHA-256 hashes; raw tokens are never retrievable.                               |
+| Network interception (man-in-the-middle)             | TLS everywhere, HSTS, no plain-HTTP endpoints.                                                                               |
+| Link intercepted via compromised email or forwarding | One-time code sent to a separate channel already on file; never to the channel that carried the link.                        |
+| Brute-forcing tokens or codes                        | Long random tokens; code lockout after 5 attempts; rate limiting on link and code endpoints.                                 |
+| Token leaked via browser referrer or logs            | `Referrer-Policy: no-referrer`; tokens masked in application logs.                                                           |
+| Malicious file upload                                | Allow-list of types checked by content; size limit; malware-scan hook; files stored outside the web root and never executed. |
+| Insider viewing documents without a need             | Role-based access scoped to the requesting banker and compliance; every view logged.                                         |
+| Audit log tampering                                  | Append-only log; each event carries the hash of the previous one so gaps or edits are detectable.                            |
+| Data kept longer than needed                         | Retention date on every file; automatic, logged deletion.                                                                    |
 
 ## Non-functional requirements
 

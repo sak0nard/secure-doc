@@ -9,6 +9,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Time-boxed slice: what is real vs mocked
 
 Build the full journey end to end with **real security logic**, and mock only the external integrations:
+
 - SMS → a mock outbox page shows the code
 - SSO → RBAC with seeded users and roles (banker, compliance officer, customer, system)
 - Object storage → local or simulated storage

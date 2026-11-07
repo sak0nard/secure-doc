@@ -155,12 +155,8 @@
           "name": "customer_sessions_link_id_upload_links_id_fk",
           "tableFrom": "customer_sessions",
           "tableTo": "upload_links",
-          "columnsFrom": [
-            "link_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["link_id"],
+          "columnsTo": ["id"],
           "onDelete": "no action",
           "onUpdate": "no action"
         }
@@ -170,9 +166,7 @@
         "customer_sessions_token_hash_unique": {
           "name": "customer_sessions_token_hash_unique",
           "nullsNotDistinct": false,
-          "columns": [
-            "token_hash"
-          ]
+          "columns": ["token_hash"]
         }
       },
       "policies": {},
@@ -293,12 +287,8 @@
           "name": "documents_request_id_requests_id_fk",
           "tableFrom": "documents",
           "tableTo": "requests",
-          "columnsFrom": [
-            "request_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["request_id"],
+          "columnsTo": ["id"],
           "onDelete": "no action",
           "onUpdate": "no action"
         }
@@ -308,9 +298,7 @@
         "documents_storage_key_unique": {
           "name": "documents_storage_key_unique",
           "nullsNotDistinct": false,
-          "columns": [
-            "storage_key"
-          ]
+          "columns": ["storage_key"]
         }
       },
       "policies": {},
@@ -359,12 +347,8 @@
           "name": "otp_codes_link_id_upload_links_id_fk",
           "tableFrom": "otp_codes",
           "tableTo": "upload_links",
-          "columnsFrom": [
-            "link_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["link_id"],
+          "columnsTo": ["id"],
           "onDelete": "no action",
           "onUpdate": "no action"
         }
@@ -418,12 +402,8 @@
           "name": "outbox_link_id_upload_links_id_fk",
           "tableFrom": "outbox",
           "tableTo": "upload_links",
-          "columnsFrom": [
-            "link_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["link_id"],
+          "columnsTo": ["id"],
           "onDelete": "no action",
           "onUpdate": "no action"
         }
@@ -493,12 +473,8 @@
           "name": "requests_customer_id_customers_id_fk",
           "tableFrom": "requests",
           "tableTo": "customers",
-          "columnsFrom": [
-            "customer_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["customer_id"],
+          "columnsTo": ["id"],
           "onDelete": "no action",
           "onUpdate": "no action"
         },
@@ -506,12 +482,8 @@
           "name": "requests_banker_id_users_id_fk",
           "tableFrom": "requests",
           "tableTo": "users",
-          "columnsFrom": [
-            "banker_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["banker_id"],
+          "columnsTo": ["id"],
           "onDelete": "no action",
           "onUpdate": "no action"
         }
@@ -609,12 +581,8 @@
           "name": "upload_links_request_id_requests_id_fk",
           "tableFrom": "upload_links",
           "tableTo": "requests",
-          "columnsFrom": [
-            "request_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["request_id"],
+          "columnsTo": ["id"],
           "onDelete": "no action",
           "onUpdate": "no action"
         }
@@ -624,9 +592,7 @@
         "upload_links_token_hash_unique": {
           "name": "upload_links_token_hash_unique",
           "nullsNotDistinct": false,
-          "columns": [
-            "token_hash"
-          ]
+          "columns": ["token_hash"]
         }
       },
       "policies": {},
@@ -675,12 +641,8 @@
           "name": "user_sessions_user_id_users_id_fk",
           "tableFrom": "user_sessions",
           "tableTo": "users",
-          "columnsFrom": [
-            "user_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["user_id"],
+          "columnsTo": ["id"],
           "onDelete": "no action",
           "onUpdate": "no action"
         }
@@ -690,9 +652,7 @@
         "user_sessions_token_hash_unique": {
           "name": "user_sessions_token_hash_unique",
           "nullsNotDistinct": false,
-          "columns": [
-            "token_hash"
-          ]
+          "columns": ["token_hash"]
         }
       },
       "policies": {},
@@ -737,76 +697,42 @@
     "public.actor_type": {
       "name": "actor_type",
       "schema": "public",
-      "values": [
-        "user",
-        "customer",
-        "system"
-      ]
+      "values": ["user", "customer", "system"]
     },
     "public.audit_outcome": {
       "name": "audit_outcome",
       "schema": "public",
-      "values": [
-        "success",
-        "failure",
-        "denied",
-        "suspicious"
-      ]
+      "values": ["success", "failure", "denied", "suspicious"]
     },
     "public.detected_type": {
       "name": "detected_type",
       "schema": "public",
-      "values": [
-        "pdf",
-        "jpeg",
-        "png"
-      ]
+      "values": ["pdf", "jpeg", "png"]
     },
     "public.document_type": {
       "name": "document_type",
       "schema": "public",
-      "values": [
-        "payslip",
-        "bank_statement",
-        "photo_id",
-        "other"
-      ]
+      "values": ["payslip", "bank_statement", "photo_id", "other"]
     },
     "public.link_state": {
       "name": "link_state",
       "schema": "public",
-      "values": [
-        "active",
-        "used",
-        "revoked",
-        "locked"
-      ]
+      "values": ["active", "used", "revoked", "locked"]
     },
     "public.request_status": {
       "name": "request_status",
       "schema": "public",
-      "values": [
-        "open",
-        "received",
-        "closed"
-      ]
+      "values": ["open", "received", "closed"]
     },
     "public.role": {
       "name": "role",
       "schema": "public",
-      "values": [
-        "banker",
-        "compliance"
-      ]
+      "values": ["banker", "compliance"]
     },
     "public.scan_status": {
       "name": "scan_status",
       "schema": "public",
-      "values": [
-        "pending",
-        "clean",
-        "infected"
-      ]
+      "values": ["pending", "clean", "infected"]
     }
   },
   "schemas": {},

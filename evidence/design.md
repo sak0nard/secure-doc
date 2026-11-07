@@ -2,16 +2,17 @@
 
 ## Technology choices
 
-| Concern | Choice | Why |
-| --- | --- | --- |
-| Runtime | Bun | Fast start-up, built-in test runner, Postgres client, S3 client and crypto |
-| Web framework | Elysia | Small, typed, lifecycle hooks for headers, CSRF and auth in one place |
-| Pages | React JSX rendered to HTML on the server | No client app or client state. React escapes every interpolated value, which is the main XSS control |
-| Validation | Zod | Every external input (forms, params, config) is parsed before use |
-| Database | Postgres 18 with Drizzle ORM | Typed schema, generated SQL migrations committed to the repo, plus hand-written SQL where it matters (audit protections) |
-| Object storage | RustFS locally, through the S3 API | The same code talks to AWS S3 in production |
+| Concern        | Choice                                   | Why                                                                                                                      |
+| -------------- | ---------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| Runtime        | Bun                                      | Fast start-up, built-in test runner, Postgres client, S3 client and crypto                                               |
+| Web framework  | Elysia                                   | Small, typed, lifecycle hooks for headers, CSRF and auth in one place                                                    |
+| Pages          | React JSX rendered to HTML on the server | No client app or client state. React escapes every interpolated value, which is the main XSS control                     |
+| Validation     | Zod                                      | Every external input (forms, params, config) is parsed before use                                                        |
+| Database       | Postgres 18 with Drizzle ORM             | Typed schema, generated SQL migrations committed to the repo, plus hand-written SQL where it matters (audit protections) |
+| Object storage | RustFS locally, through the S3 API       | The same code talks to AWS S3 in production                                                                              |
 
 **Alternatives considered:**
+
 - **A React browser app with a JSON API.** It gives a smoother UI, but means two surfaces to secure and review, and adds client-side state.
 - **A plain Bun server with no framework.** It has no dependencies, but escaping, cookies and routing would be hand-rolled, which a security reviewer would rightly distrust.
 
@@ -33,28 +34,30 @@ src/
 
 ## Data model
 
-| Table | Holds |
-| --- | --- |
-| `users` | Seeded bankers and compliance officers (stands in for SSO) |
-| `user_sessions` | Signed-in sessions; only the SHA-256 of the session token is stored |
-| `customers` | Seeded synthetic customers and their mobile numbers (stands in for the customer master) |
-| `requests` | Who asked whom for which document types, and the status (open, received, closed) |
-| `upload_links` | Hash of each link token, its state, expiry and attempt counters. At most one active link per request, enforced by a unique index |
-| `otp_codes` | Keyed hashes of one-time codes, with expiry |
-| `customer_sessions` | Short upload sessions created after a correct code; token stored as a hash |
-| `documents` | Metadata for each stored file: random storage key, detected type, SHA-256, scan status, retention date |
-| `outbox` | Mock SMS messages |
-| `audit_events` | Append-only, hash-chained audit log |
+| Table               | Holds                                                                                                                            |
+| ------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| `users`             | Seeded bankers and compliance officers (stands in for SSO)                                                                       |
+| `user_sessions`     | Signed-in sessions; only the SHA-256 of the session token is stored                                                              |
+| `customers`         | Seeded synthetic customers and their mobile numbers (stands in for the customer master)                                          |
+| `requests`          | Who asked whom for which document types, and the status (open, received, closed)                                                 |
+| `upload_links`      | Hash of each link token, its state, expiry and attempt counters. At most one active link per request, enforced by a unique index |
+| `otp_codes`         | Keyed hashes of one-time codes, with expiry                                                                                      |
+| `customer_sessions` | Short upload sessions created after a correct code; token stored as a hash                                                       |
+| `documents`         | Metadata for each stored file: random storage key, detected type, SHA-256, scan status, retention date                           |
+| `outbox`            | Mock SMS messages                                                                                                                |
+| `audit_events`      | Append-only, hash-chained audit log                                                                                              |
 
 ## HTTP hardening
 
 These headers are on every response, including errors:
+
 - `Referrer-Policy: no-referrer`, so link tokens never leak to other sites.
 - `X-Content-Type-Options: nosniff`.
 - `Content-Security-Policy: default-src 'self'; frame-ancestors 'none'; form-action 'self'`. No inline scripts or styles, and no framing.
 - `Cache-Control: no-store`, so pages showing links or documents aren't cached.
 
 Request forgery is blocked two ways:
+
 - Session cookies are `HttpOnly` and `SameSite=Strict`.
 - Every state-changing request must carry an `Origin` header matching `BASE_URL`. Without one it gets 403.
 
@@ -108,22 +111,23 @@ Customer (phone) ─────┘    (server-rendered     ├── Object sto
 
 ## Security and privacy
 
-| Threat | Control | Status |
-| --- | --- | --- |
-| Database leak exposes live links or sessions | Tokens stored only as SHA-256; codes as keyed HMAC-SHA-256 | Built for user sessions; designed for links, codes and customer sessions |
-| Stolen or forwarded link | The code is sent to the mobile on file, never the channel that carried the link. Links are single-use, expire in 72 hours, and are revoked on reissue | Designed |
-| Guessing tokens or codes | 256-bit tokens; a link locks after 5 wrong codes; at most 3 codes per link, 30 seconds apart | Designed |
-| Token leaking through the Referer header or logs | `Referrer-Policy: no-referrer` on every response; tokens masked in request logs | Built |
-| Cross-site request forgery | `SameSite=Strict` cookies, plus an `Origin` check on every state-changing request | Built |
-| Cross-site scripting | React escapes all output; the content security policy allows no inline scripts and no framing | Built |
-| Internal details leaking in errors | Generic error pages; details only in the server log | Built |
-| Spoofed client IP in the audit log | `X-Forwarded-For` is used only when the proxy is trusted, and only the entry the proxy added | Built |
-| Malicious upload | Type checked from file contents, not the name; 10 MB limit; scan step; random storage keys; files always served as downloads, never rendered on the portal's domain | Designed |
-| Insider browsing documents | One authorisation policy: the requesting banker and compliance only. Every view and every refusal audited | Designed |
-| Audit tampering | SHA-256 hash chain over every event field (canonical JSON), plus database permissions and a trigger that block edits and deletes | Built |
-| Keeping data too long | Retention date recorded on every file (purge job out of scope) | Designed |
+| Threat                                           | Control                                                                                                                                                             | Status                                                                   |
+| ------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------ |
+| Database leak exposes live links or sessions     | Tokens stored only as SHA-256; codes as keyed HMAC-SHA-256                                                                                                          | Built for user sessions; designed for links, codes and customer sessions |
+| Stolen or forwarded link                         | The code is sent to the mobile on file, never the channel that carried the link. Links are single-use, expire in 72 hours, and are revoked on reissue               | Designed                                                                 |
+| Guessing tokens or codes                         | 256-bit tokens; a link locks after 5 wrong codes; at most 3 codes per link, 30 seconds apart                                                                        | Designed                                                                 |
+| Token leaking through the Referer header or logs | `Referrer-Policy: no-referrer` on every response; tokens masked in request logs                                                                                     | Built                                                                    |
+| Cross-site request forgery                       | `SameSite=Strict` cookies, plus an `Origin` check on every state-changing request                                                                                   | Built                                                                    |
+| Cross-site scripting                             | React escapes all output; the content security policy allows no inline scripts and no framing                                                                       | Built                                                                    |
+| Internal details leaking in errors               | Generic error pages; details only in the server log                                                                                                                 | Built                                                                    |
+| Spoofed client IP in the audit log               | `X-Forwarded-For` is used only when the proxy is trusted, and only the entry the proxy added                                                                        | Built                                                                    |
+| Malicious upload                                 | Type checked from file contents, not the name; 10 MB limit; scan step; random storage keys; files always served as downloads, never rendered on the portal's domain | Designed                                                                 |
+| Insider browsing documents                       | One authorisation policy: the requesting banker and compliance only. Every view and every refusal audited                                                           | Designed                                                                 |
+| Audit tampering                                  | SHA-256 hash chain over every event field (canonical JSON), plus database permissions and a trigger that block edits and deletes                                    | Built                                                                    |
+| Keeping data too long                            | Retention date recorded on every file (purge job out of scope)                                                                                                      | Designed                                                                 |
 
 **Privacy:**
+
 - All customer data in this build is synthetic.
 - Customer mobile numbers are shown masked, except the last two digits.
 - Audit details never contain tokens, codes or file contents.
@@ -154,14 +158,14 @@ The first audited actions are sign-in (`user.signed_in`), failed sign-in (`user.
 
 Assuming AWS in the Sydney region (ap-southeast-2) for data residency:
 
-| Concern | Local | Production |
-| --- | --- | --- |
-| App | `bun` process on a laptop | Containers on ECS Fargate across availability zones, behind an Application Load Balancer with AWS WAF (TLS, HSTS, rate limiting) |
-| Database | Postgres 18 in Docker | Amazon RDS for PostgreSQL, Multi-AZ, encrypted with KMS, automated backups and point-in-time recovery |
-| Files | RustFS | Amazon S3 with KMS encryption, Block Public Access, versioning, and lifecycle rules aligned to retention |
-| Audit anchor | — | The latest audit hash copied regularly to an S3 bucket with Object Lock (write-once), so tail truncation is detectable |
-| SMS | Outbox table and `/dev/outbox` page | An SMS provider (e.g. Amazon SNS or Pinpoint) behind the same interface; outbox page disabled |
-| Identity | Mock sign-in | The bank's identity provider via OIDC, with roles mapped from groups |
-| Malware scanning | Always-clean mock | Asynchronous scanning on upload, with quarantine |
-| Secrets | `.env` file | AWS Secrets Manager, injected at start-up |
-| Monitoring | Request log on stdout | Central logs; alerts on lockouts, denied access and audit-chain breaks; feed to the bank's security monitoring (SIEM) |
+| Concern          | Local                               | Production                                                                                                                       |
+| ---------------- | ----------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| App              | `bun` process on a laptop           | Containers on ECS Fargate across availability zones, behind an Application Load Balancer with AWS WAF (TLS, HSTS, rate limiting) |
+| Database         | Postgres 18 in Docker               | Amazon RDS for PostgreSQL, Multi-AZ, encrypted with KMS, automated backups and point-in-time recovery                            |
+| Files            | RustFS                              | Amazon S3 with KMS encryption, Block Public Access, versioning, and lifecycle rules aligned to retention                         |
+| Audit anchor     | —                                   | The latest audit hash copied regularly to an S3 bucket with Object Lock (write-once), so tail truncation is detectable           |
+| SMS              | Outbox table and `/dev/outbox` page | An SMS provider (e.g. Amazon SNS or Pinpoint) behind the same interface; outbox page disabled                                    |
+| Identity         | Mock sign-in                        | The bank's identity provider via OIDC, with roles mapped from groups                                                             |
+| Malware scanning | Always-clean mock                   | Asynchronous scanning on upload, with quarantine                                                                                 |
+| Secrets          | `.env` file                         | AWS Secrets Manager, injected at start-up                                                                                        |
+| Monitoring       | Request log on stdout               | Central logs; alerts on lockouts, denied access and audit-chain breaks; feed to the bank's security monitoring (SIEM)            |

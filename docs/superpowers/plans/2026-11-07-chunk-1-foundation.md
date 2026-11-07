@@ -36,11 +36,11 @@
 
 ## Review Focus
 
-1. **A garbage, tampered or expired `sid` cookie** must be treated as signed out (redirect to `/login`), never a 500. *Task 4 test.*
-2. **`POST /login` with a non-UUID or unknown user id** returns 400 and sets no cookie. *Task 4 test.*
-3. **A POST without an `Origin` header** (some clients strip it), including `/logout`, is refused with 403. *Task 3 test.*
-4. **Missing or short env vars** stop startup with a message listing every bad variable, not just the first. *Task 1 test.*
-5. **Running the seed twice** leaves the same rows (idempotent) and does not fail. *Task 2 test.*
+1. **A garbage, tampered or expired `sid` cookie** must be treated as signed out (redirect to `/login`), never a 500. _Task 4 test._
+2. **`POST /login` with a non-UUID or unknown user id** returns 400 and sets no cookie. _Task 4 test._
+3. **A POST without an `Origin` header** (some clients strip it), including `/logout`, is refused with 403. _Task 3 test._
+4. **Missing or short env vars** stop startup with a message listing every bad variable, not just the first. _Task 1 test._
+5. **Running the seed twice** leaves the same rows (idempotent) and does not fail. _Task 2 test._
 
 ---
 
@@ -75,16 +75,19 @@ tests/*.test.ts
 ### Task 1: Local services and config
 
 **Files:**
+
 - Create: `compose.yml`, `docker/postgres/init.sh`, `.env.example`, `.env.test`, `src/config.ts`
 - Test: `tests/config.test.ts`
 - Modify: `package.json` (add deps: `elysia`, `zod`, `drizzle-orm`, `react`, `react-dom`; dev: `drizzle-kit`, `@types/react`, `@types/react-dom`; scripts below)
 
 **Interfaces:**
+
 - Produces:
   - `loadConfig(env: Record<string, string | undefined>): Config`, which throws `ConfigError` (message lists every invalid key).
   - `type Config = { databaseUrl; databaseOwnerUrl; s3: { endpoint; bucket; accessKeyId; secretAccessKey; region }; baseUrl: URL; otpPepper; retentionDays: number; trustProxy: boolean; mockOutboxEnabled: boolean; port: number }`
 
 **Compose details:**
+
 - `postgres:18`:
   - `POSTGRES_USER=secure_doc_owner`, `POSTGRES_DB=secure_doc`, port 5432.
   - Mounts `docker/postgres/init.sh` into `/docker-entrypoint-initdb.d/`.
@@ -99,24 +102,42 @@ tests/*.test.ts
 - [ ] **Step 1: Write failing tests** in `tests/config.test.ts`:
 
 ```ts
-const valid = { DATABASE_URL: "postgres://a", DATABASE_OWNER_URL: "postgres://o", S3_ENDPOINT: "http://localhost:9000",
-  S3_BUCKET: "docs", S3_ACCESS_KEY_ID: "k", S3_SECRET_ACCESS_KEY: "s", S3_REGION: "ap-southeast-2",
-  BASE_URL: "http://localhost:3000", OTP_PEPPER: "x".repeat(32) };
-test("defaults retention to 2555 days, proxy trust off, outbox off, port 3000", () => {
-  const c = loadConfig(valid);
-  expect([c.retentionDays, c.trustProxy, c.mockOutboxEnabled, c.port]).toEqual([2555, false, false, 3000]);
-});
-test("rejects a pepper shorter than 32 characters", () => {
-  expect(() => loadConfig({ ...valid, OTP_PEPPER: "short" })).toThrow(/OTP_PEPPER/);
-});
-test("names every invalid variable at once", () => {
-  const { DATABASE_URL, BASE_URL, ...rest } = valid;
-  expect(() => loadConfig(rest)).toThrow(/DATABASE_URL[\s\S]*BASE_URL|BASE_URL[\s\S]*DATABASE_URL/);
-});
-test("parses booleans strictly", () => {
-  expect(loadConfig({ ...valid, TRUST_PROXY: "true", MOCK_OUTBOX_ENABLED: "true" }).trustProxy).toBe(true);
-  expect(() => loadConfig({ ...valid, TRUST_PROXY: "yes" })).toThrow(/TRUST_PROXY/);
-});
+const valid = {
+  DATABASE_URL: 'postgres://a',
+  DATABASE_OWNER_URL: 'postgres://o',
+  S3_ENDPOINT: 'http://localhost:9000',
+  S3_BUCKET: 'docs',
+  S3_ACCESS_KEY_ID: 'k',
+  S3_SECRET_ACCESS_KEY: 's',
+  S3_REGION: 'ap-southeast-2',
+  BASE_URL: 'http://localhost:3000',
+  OTP_PEPPER: 'x'.repeat(32),
+}
+test('defaults retention to 2555 days, proxy trust off, outbox off, port 3000', () => {
+  const c = loadConfig(valid)
+  expect([c.retentionDays, c.trustProxy, c.mockOutboxEnabled, c.port]).toEqual([
+    2555,
+    false,
+    false,
+    3000,
+  ])
+})
+test('rejects a pepper shorter than 32 characters', () => {
+  expect(() => loadConfig({ ...valid, OTP_PEPPER: 'short' })).toThrow(/OTP_PEPPER/)
+})
+test('names every invalid variable at once', () => {
+  const { DATABASE_URL, BASE_URL, ...rest } = valid
+  expect(() => loadConfig(rest)).toThrow(
+    /DATABASE_URL[\s\S]*BASE_URL|BASE_URL[\s\S]*DATABASE_URL/
+  )
+})
+test('parses booleans strictly', () => {
+  expect(
+    loadConfig({ ...valid, TRUST_PROXY: 'true', MOCK_OUTBOX_ENABLED: 'true' })
+      .trustProxy
+  ).toBe(true)
+  expect(() => loadConfig({ ...valid, TRUST_PROXY: 'yes' })).toThrow(/TRUST_PROXY/)
+})
 ```
 
 - [ ] **Step 2: Run** `bun test tests/config.test.ts`. Expected: FAIL (module not found).
@@ -134,10 +155,12 @@ test("parses booleans strictly", () => {
 ### Task 2: Schema, migrations, seed, test harness
 
 **Files:**
+
 - Create: `src/db/schema.ts`, `src/db/client.ts`, `src/db/migrate.ts`, `src/db/seed.ts`, `drizzle.config.ts`, `src/db/migrations/*` (generated + `audit_protections` custom), `bunfig.toml`, `tests/setup.ts`, `tests/helpers.ts`
 - Test: `tests/db.test.ts`
 
 **Interfaces:**
+
 - Consumes: `loadConfig`.
 - Produces:
   - `createDb(url: string): Db` (a Drizzle `bun-sql` instance; `type Db`, and `type Tx` for a transaction handle).
@@ -148,6 +171,7 @@ test("parses booleans strictly", () => {
   - Test helpers: `resetDb(): Promise<void>` (truncate every table as owner, restart identities, re-seed), `ownerDb: Db`, `appDb: Db`.
 
 **Schema notes** (columns exactly as spec §5/§6.6, plus):
+
 - `user_sessions`: `id, user_id → users, token_hash unique, expires_at, ended_at`.
 - `upload_links`:
   - Partial unique index on `(request_id) WHERE state = 'active'`.
@@ -157,6 +181,7 @@ test("parses booleans strictly", () => {
 - Seed customers have E.164 mobiles in the `+61 4xx` range, clearly synthetic.
 
 **Custom migration `audit_protections`** (`drizzle-kit generate --custom --name audit_protections`):
+
 - A trigger function raising `'audit_events is append-only'` `BEFORE UPDATE OR DELETE ON audit_events FOR EACH ROW`.
 - `GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO secure_doc_app`.
 - `GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO secure_doc_app`.
@@ -179,10 +204,12 @@ test("parses booleans strictly", () => {
 ### Task 3: App skeleton: rendering, headers, logging, Origin check
 
 **Files:**
+
 - Create: `src/deps.ts`, `src/app.ts`, `src/server.ts`, `src/web/render.tsx`, `src/web/http.ts`
 - Test: `tests/http.test.ts`, `tests/helpers.ts` (extend)
 
 **Interfaces:**
+
 - Consumes: `Config`, `createDb`.
 - Produces:
   - `type Deps = { config: Config; db: Db; now: () => Date; log: (line: string) => void }`; `buildDeps(config): Deps`.
@@ -196,33 +223,38 @@ test("parses booleans strictly", () => {
 - [ ] **Step 1: Write failing tests** in `tests/http.test.ts`:
 
 ```ts
-test("security headers on every response, including 404", async () => {
-  for (const path of ["/login", "/does-not-exist"]) {
-    const res = await get(testApp().app, path);
-    expect(res.headers.get("referrer-policy")).toBe("no-referrer");
-    expect(res.headers.get("x-content-type-options")).toBe("nosniff");
-    expect(res.headers.get("content-security-policy")).toBe("default-src 'self'; frame-ancestors 'none'; form-action 'self'");
-    expect(res.headers.get("cache-control")).toBe("no-store");
+test('security headers on every response, including 404', async () => {
+  for (const path of ['/login', '/does-not-exist']) {
+    const res = await get(testApp().app, path)
+    expect(res.headers.get('referrer-policy')).toBe('no-referrer')
+    expect(res.headers.get('x-content-type-options')).toBe('nosniff')
+    expect(res.headers.get('content-security-policy')).toBe(
+      "default-src 'self'; frame-ancestors 'none'; form-action 'self'"
+    )
+    expect(res.headers.get('cache-control')).toBe('no-store')
   }
-});
-test("maskTokens hides link tokens but keeps fixed customer paths", () => {
-  expect(maskTokens("/u/AbC-123_xyz")).toBe("/u/****");
-  expect(maskTokens("/u/AbC-123_xyz/verify")).toBe("/u/****/verify");
-  expect(maskTokens("/u/upload")).toBe("/u/upload");
-  expect(maskTokens("/requests/1")).toBe("/requests/1");
-});
-test("request log line never contains the raw token", async () => {
-  const { app, logs } = testApp();
-  await get(app, "/u/SECRETTOKENVALUE");
-  expect(logs.join("\n")).not.toContain("SECRETTOKENVALUE");
-  expect(logs.some(l => l.includes("GET /u/**** "))).toBe(true);
-});
-test("POST without Origin is refused", async () => {
-  expect((await post(testApp().app, "/logout", {}, { origin: null })).status).toBe(403);
-});
-test("POST from a foreign Origin is refused", async () => {
-  expect((await post(testApp().app, "/logout", {}, { origin: "https://evil.example" })).status).toBe(403);
-});
+})
+test('maskTokens hides link tokens but keeps fixed customer paths', () => {
+  expect(maskTokens('/u/AbC-123_xyz')).toBe('/u/****')
+  expect(maskTokens('/u/AbC-123_xyz/verify')).toBe('/u/****/verify')
+  expect(maskTokens('/u/upload')).toBe('/u/upload')
+  expect(maskTokens('/requests/1')).toBe('/requests/1')
+})
+test('request log line never contains the raw token', async () => {
+  const { app, logs } = testApp()
+  await get(app, '/u/SECRETTOKENVALUE')
+  expect(logs.join('\n')).not.toContain('SECRETTOKENVALUE')
+  expect(logs.some((l) => l.includes('GET /u/**** '))).toBe(true)
+})
+test('POST without Origin is refused', async () => {
+  expect((await post(testApp().app, '/logout', {}, { origin: null })).status).toBe(403)
+})
+test('POST from a foreign Origin is refused', async () => {
+  expect(
+    (await post(testApp().app, '/logout', {}, { origin: 'https://evil.example' }))
+      .status
+  ).toBe(403)
+})
 ```
 
 - [ ] **Step 2: Run** `bun test tests/http.test.ts`. Expected: FAIL.
@@ -235,11 +267,13 @@ test("POST from a foreign Origin is refused", async () => {
 ### Task 4: Mock login and user sessions
 
 **Files:**
+
 - Create: `src/modules/access/sessions.ts`, `src/web/routes/login.tsx`
 - Modify: `src/app.ts` (mount routes; user-session resolver)
 - Test: `tests/login.test.ts`
 
 **Interfaces:**
+
 - Consumes: `Deps`, `SEED`, `page`, `Layout`, `post`/`get` helpers.
 - Produces:
   - `createUserSession(db: Db | Tx, userId: string, now: Date): Promise<{ token: string; expiresAt: Date }>`. The token is 32 random bytes, base64url; only its sha256 hex is stored.
@@ -250,6 +284,7 @@ test("POST from a foreign Origin is refused", async () => {
   - `sha256Hex(input: string | Uint8Array): string` in `src/modules/access/crypto.ts` (shared by later chunks).
 
 **Routes:**
+
 - `GET /login`: a form with one radio button per user (name + role) and a submit.
 - `POST /login` (`userId`, validated as a Zod UUID that must exist): sets `sid` and responds `303 /`.
 - `POST /logout`: ends the session, clears the cookie, `303 /login`.
@@ -276,6 +311,7 @@ Login and logout audit events are added in chunk 2, once `audit.append` exists.
 ### Task 5: Run it end to end and start the evidence docs
 
 **Files:**
+
 - Modify: `README.md`
 - Create: `evidence/operate.md`, `evidence/design.md`
 
@@ -294,6 +330,7 @@ Login and logout audit events are added in chunk 2, once `audit.append` exists.
   - Component boundaries (spec §4).
   - The data model summary.
   - HTTP hardening (§6.7).
-  
+
   Mark the later sections "to be completed" headings only.
+
 - [ ] **Step 5: Commit**: `git commit -m "docs: run instructions and initial evidence"`

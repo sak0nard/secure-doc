@@ -3,12 +3,14 @@
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:**
+
 - A banker creates a request and sees its upload link exactly once.
 - Bankers and compliance see the requests they're allowed to see, with a status that includes Expired and Link locked.
 - A banker can reissue (revoking the old link) or close a request.
 - A customer opening a revoked, expired or unknown link gets one generic refusal.
 
 **Architecture:**
+
 - **`src/modules/requests/`** owns requests and their links. Every state change is a domain function that takes a transaction and an `ActionContext` and writes its audit events inside that transaction.
 - **`src/modules/access/policy.ts`** holds the single authorisation table. Routes ask it before acting. On a refusal, routes write `access.denied` in a separate transaction that commits, then respond 403.
 - **Display status:** "Expired" is computed by one pure function from the request's stored status and its latest link.
@@ -20,6 +22,7 @@
 **Depends on chunk 2:** `appendAudit(tx, AuditInput)`, `AuditInput`, `verifyChain` from `src/modules/audit/audit.ts`. If chunk 2 landed different names, use those and ledger a ruling.
 
 **Scope note:**
+
 - The policy module and the `access.denied` handling for request routes land here, because these routes need them. Chunk 6 reuses both for documents and the compliance audit page.
 - `GET /u/:token` lands here in minimal form (valid → placeholder, refused → generic page), so that AC-5 is testable over HTTP. Chunk 4 replaces the valid-link page.
 
@@ -52,11 +55,11 @@
 
 ## Review Focus
 
-1. **Two reissues of the same request at once** must leave exactly one active link and never return a 500. *Task 3 test.*
-2. **A hostile token in the URL** (5,000 characters, `%00`, `..%2F`, non-ASCII) gets the generic 404 refusal, never a 500. *Task 4 test.*
-3. **A malformed request id** (`/requests/not-a-uuid`) returns 404, not 500. *Task 3 test.*
-4. **Reissuing an expired request** shows it as Open again with a usable link. *Task 3 test.*
-5. **Repeated or invalid `documentTypes`** in the create form (duplicates, an unknown value, none): unknown or none is a 400, and duplicates are stored once. *Task 2 test.*
+1. **Two reissues of the same request at once** must leave exactly one active link and never return a 500. _Task 3 test._
+2. **A hostile token in the URL** (5,000 characters, `%00`, `..%2F`, non-ASCII) gets the generic 404 refusal, never a 500. _Task 4 test._
+3. **A malformed request id** (`/requests/not-a-uuid`) returns 404, not 500. _Task 3 test._
+4. **Reissuing an expired request** shows it as Open again with a usable link. _Task 3 test._
+5. **Repeated or invalid `documentTypes`** in the create form (duplicates, an unknown value, none): unknown or none is a 400, and duplicates are stored once. _Task 2 test._
 
 ---
 
@@ -80,10 +83,12 @@ evidence/*.md                       (modify)
 ### Task 1: Policy and display status (pure units)
 
 **Files:**
+
 - Create: `src/modules/access/policy.ts`, `src/modules/requests/status.ts`
 - Test: `tests/policy.test.ts`, `tests/status.test.ts`
 
 **Interfaces:**
+
 - Consumes: `User` (`src/modules/access/sessions.ts`).
 - Produces:
   - `type Action = "request.create" | "request.view" | "request.reissue" | "request.close" | "document.download" | "audit.view"`
@@ -115,11 +120,13 @@ evidence/*.md                       (modify)
 ### Task 2: Create a request; show the link once; list requests
 
 **Files:**
+
 - Create: `src/modules/requests/requests.ts`, `src/modules/requests/links.ts`, `src/web/deny.tsx`, `src/web/routes/requests.tsx`
 - Modify: `src/web/routes/login.tsx` (drop the placeholder `GET /`; keep `requireUser` export), `src/app.ts` (mount the request routes)
 - Test: `tests/requests.test.ts`
 
 **Interfaces:**
+
 - Consumes:
   - `appendAudit`, `AuditInput`
   - `authorise`, `displayStatus`
@@ -136,10 +143,12 @@ evidence/*.md                       (modify)
   - `type DocumentType = "payslip" | "bank_statement" | "photo_id" | "other"`, from the schema enum.
 
 **Home page:**
+
 - `GET /` keeps the line `Signed in as {name} ({role})` and the sign-out form; existing login tests rely on both.
 - Below them is the request list: customer, document types, banker, created, status label, and a "Link locked" badge.
 
 **Create form:**
+
 - `GET /requests/new`: a customer `<select>` (name + masked mobile) and one checkbox per document type.
 - `POST /requests` is validated by Zod: `customerId` UUID of an existing customer; `documentTypes` a non-empty array of enum values, deduplicated.
 - The response is 200 with a page holding the link in a read-only `<input>` and the note "Copy this link now. It won't be shown again."
@@ -168,10 +177,12 @@ evidence/*.md                       (modify)
 ### Task 3: Request detail, reissue and close
 
 **Files:**
+
 - Modify: `src/modules/requests/requests.ts`, `src/web/routes/requests.tsx`
 - Test: `tests/requests.test.ts` (extend)
 
 **Interfaces:**
+
 - Produces:
   - `type RequestDetail = { id; bankerId; customer: { name; maskedMobile }; documentTypes; status: DisplayStatus; link: { state; expiresAt } | null; createdAt }`
   - `getRequest(db, id: string, now: Date): Promise<RequestDetail | null>`
@@ -183,9 +194,10 @@ evidence/*.md                       (modify)
   - `markReceivedForTest` is **not** added. Tests set `status = 'received'` directly via `appDb`, until chunk 5 provides the real path.
 
 **Detail page:**
+
 - Shows the customer name, masked mobile, document types, the status label (and "Link locked: reissue required" when locked), and the link state with its expiry time.
 - It has a "Documents" section, which shows "None yet" (chunk 5 fills it).
-- The Reissue and Close forms are shown only when `authorise` allows them *and* the state allows them.
+- The Reissue and Close forms are shown only when `authorise` allows them _and_ the state allows them.
 - Every successful display writes `request.viewed`.
 
 - [ ] **Step 1: Write failing tests** (extend `tests/requests.test.ts`):
@@ -209,12 +221,14 @@ evidence/*.md                       (modify)
 ### Task 4: Customer link check (minimal `GET /u/:token`)
 
 **Files:**
+
 - Modify: `src/modules/requests/links.ts`
 - Create: `src/web/routes/customer.tsx`
 - Modify: `src/app.ts`
 - Test: `tests/links.test.ts`
 
 **Interfaces:**
+
 - Produces:
   - `type LinkResolution = { ok: true; linkId: string; requestId: string } | { ok: false; reason: "unknown" | "used" | "revoked" | "locked" | "expired"; linkId?: string; requestId?: string }`
   - `resolveLink(db: Db | Tx, token: string, now: Date): Promise<LinkResolution>`. Chunk 4 calls this from the code routes.
@@ -227,7 +241,7 @@ evidence/*.md                       (modify)
   - `"a fresh link is accepted"` → 200.
   - `"AC-5: a reissued (revoked) link is refused"`: old token → 404 with `REFUSED_LINK_TEXT`; the new token → 200; a `link.refused` event with `detail.reason "revoked"`.
   - `"AC-5: an expired link is refused"`: clock at `issuedAt + 72h - 1s` → 200; at `+72h` → 404; the event reason is `"expired"`.
-  - `"a locked link is refused"`: set the link `state = 'locked'` via `appDb` → 404, reason `"locked"`. *(The real lock path arrives in chunk 4.)*
+  - `"a locked link is refused"`: set the link `state = 'locked'` via `appDb` → 404, reason `"locked"`. _(The real lock path arrives in chunk 4.)_
   - `"unknown and hostile tokens get the same refusal, never a 500"`: for `"x"`, `"a".repeat(5000)`, `"%00"`, `"..%2F..%2Fetc"` and `"%E2%9C%93"` → 404 with exactly the same body as the revoked case; the event reason is `"unknown"`.
   - `"refusal events never contain the raw token"`: no `audit_events` row's JSON contains the token. `detail.tokenHashPrefix` is 8 hex characters.
   - `"refusal pages send no-referrer"`: the `referrer-policy` header is `no-referrer` on both 200 and 404.
@@ -243,15 +257,16 @@ AC-5's "used" case is tested in chunk 5, when submission marks a link used.
 ### Task 5: Evidence
 
 **Files:**
+
 - Modify: `evidence/design.md`, `evidence/verify.md`, `evidence/decisions.md`, `evidence/operate.md`
 
 - [ ] **Step 1: `design.md`**
-  - Security table: the rows for database leak (links), insider browsing (requests) and forwarded link (revocation and expiry) move to *Built* where now true.
+  - Security table: the rows for database leak (links), insider browsing (requests) and forwarded link (revocation and expiry) move to _Built_ where now true.
   - Add an "Authorisation" subsection with the policy table, the denied-and-logged behaviour, and the single decision point.
 - [ ] **Step 2: `verify.md`**
   - Record the real results.
   - Add "Requests and links" and "Authorisation" test groups.
-  - Mark AC-1 *Met*; mark AC-5 *Partly met* (revoked and expired; used comes with uploads).
+  - Mark AC-1 _Met_; mark AC-5 _Partly met_ (revoked and expired; used comes with uploads).
   - Note that AC-7 is partly covered (request pages; documents come later).
 - [ ] **Step 3: `decisions.md`.** Under D5, note that reissue locks the request row so concurrent reissues can't produce two active links.
 - [ ] **Step 4: `operate.md`.** Under Status, describe the request list labels (Open, Expired, Received, Closed, Link locked) and what a banker does for each.
