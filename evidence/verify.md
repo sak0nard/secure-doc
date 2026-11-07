@@ -67,10 +67,13 @@ Each criterion will get its own named test.
 ## Known gaps
 
 - **Audit tail truncation:** deleting the newest audit events cannot be detected by the hash chain alone. Production fix: periodically anchor the latest hash in write-once storage.
-- **Owner can still remove audit rows.** The database owner can empty the audit table (TRUNCATE is not blocked by the row trigger) or disable the trigger. The app role can do neither. Production: the owner role is held only by the migration pipeline, and the anchored hash above detects it.
 - **Future tables aren't automatically granted** to the app role; every table exists today, but a later table would need its own grant.
 - **Log timing:** request log lines are written just after the response is sent, so two tests wait 5 ms before checking. This could be flaky on a heavily loaded machine.
 - **Not tested:** load, availability, accessibility (WCAG 2.1 AA), and behaviour behind a real TLS proxy.
+
+## Accepted risks
+
+- **The database owner can empty or rewrite the audit table.** The row trigger does not block TRUNCATE, and the owner can disable the trigger. The app's role can do neither. This is accepted: the owner role is held only by the migration pipeline, not by the running app or day-to-day staff, and the production audit anchor (above) would reveal it.
 
 ## Local versus pipeline
 
