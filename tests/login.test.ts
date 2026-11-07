@@ -93,3 +93,10 @@ test("login page lists every seeded user", async () => {
   const body = await (await get(testApp().app, "/login")).text();
   for (const name of ["Alice Banker", "Bob Banker", "Carol Compliance"]) expect(body).toContain(name);
 });
+
+test("request log records the real status of a redirect", async () => {
+  const { app, logs } = testApp();
+  await post(app, "/login", { userId: SEED.users.alice });
+  await Bun.sleep(5); // the log hook runs after the response is sent
+  expect(logs.some((l) => l.startsWith("POST /login 303 "))).toBe(true);
+});

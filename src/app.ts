@@ -16,9 +16,11 @@ export function createApp(deps: Deps) {
         return "Forbidden";
       }
     })
-    .onAfterResponse(({ request, set }) => {
+    .onAfterResponse(({ request, set, responseValue }) => {
+      // Handlers that return a Response carry their own status; set.status only covers the rest.
+      const status = responseValue instanceof Response ? responseValue.status : (set.status ?? 200);
       const ms = Math.round(performance.now() - (started.get(request) ?? performance.now()));
-      deps.log(`${request.method} ${maskTokens(new URL(request.url).pathname)} ${set.status ?? 200} ${ms}ms`);
+      deps.log(`${request.method} ${maskTokens(new URL(request.url).pathname)} ${status} ${ms}ms`);
     })
     .get("/styles.css", ({ set }) => {
       set.headers["content-type"] = "text/css; charset=utf-8";
