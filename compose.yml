@@ -7,7 +7,7 @@ services:
       POSTGRES_DB: secure_doc
       APP_DB_PASSWORD: ${APP_DB_PASSWORD:-app_local_only}
     ports:
-      - '${PG_HOST_PORT:-5433}:5432'
+      - '127.0.0.1:${PG_HOST_PORT:-5433}:5432'
     volumes:
       - pgdata:/var/lib/postgresql
       - ./docker/postgres/init.sh:/docker-entrypoint-initdb.d/init.sh:ro
@@ -26,8 +26,8 @@ services:
       RUSTFS_ADDRESS: ':9000'
       RUSTFS_CONSOLE_ENABLE: 'true'
     ports:
-      - '9000:9000'
-      - '9001:9001'
+      - '127.0.0.1:9000:9000'
+      - '127.0.0.1:9001:9001'
     volumes:
       - rustfsdata:/data
 
