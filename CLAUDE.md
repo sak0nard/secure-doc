@@ -42,4 +42,6 @@ Out of scope for the slice: the retention purge job (FR-15, but still record the
 
 ## Working conventions
 
+All application code goes under `src/`. All tests go under `tests/`, never next to the code they test.
+
 Use the project skill `software-design-principles` (`.claude/skills/`) when planning or making code changes. It covers minimal layers and state, small verifiable units (failing test first, then the fix), and testing behaviour rather than implementation. Write tests against the acceptance criteria in `evidence/intent.md`.

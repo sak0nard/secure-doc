@@ -70,7 +70,7 @@ Browser ──HTTP──▶ Elysia app
                    │    otp/        one-time codes, resend limit, lockout, customer session (FR-5..7)
                    │    documents/  upload validation, storage, scan hook, viewing (FR-8..10, FR-12, FR-17)
                    │    audit/      hash-chained append + verify (FR-13, FR-14)
-                   │    access/     staff identity (mock login) + the single authorisation policy
+                   │    access/     user identity (mock login) + the single authorisation policy
                    ├─ ports (interfaces) + local adapters
                    │    ObjectStore    → S3Client against RustFS
                    │    SmsSender      → writes to `outbox` table, shown on /dev/outbox
@@ -78,6 +78,8 @@ Browser ──HTTP──▶ Elysia app
                    │    (Identity is the mock-login session; customer data comes from the seeded `customers` table)
                    └─ db/  Drizzle schema, migrations, seed
 ```
+
+**Layout:** all application code lives under `src/` (`src/web/`, `src/modules/`, `src/db/`, adapters). All tests live under `tests/`, never next to the code. Only tool config (`compose.yml`, `drizzle.config.ts`, `bunfig.toml`, `docker/`) sits at the repo root.
 
 **Component boundaries**
 
@@ -177,10 +179,10 @@ Open ──(customer submits files)──▶ Received ──(banker or complianc
   - A crash between put and commit leaves an orphan object with no row. It is unreachable because every read goes through a `documents` row. This is noted as a known gap, to be swept by the purge job in production.
 - **Scan gating:** only documents with `scan_status = 'clean'` can be viewed or downloaded. The scan hook runs synchronously in the slice. Production would run it asynchronously with quarantine.
 
-### 6.5 Staff identity and authorisation (FR-12, FR-14)
+### 6.5 User identity and authorisation (FR-12, FR-14)
 
-- **Mock login** at `GET /login` lists the seeded staff users. `POST /login` with a user id sets a staff session.
-  - The session is a server-side row in `staff_sessions` (`id`, `user_id`, `token_hash`, `expires_at` = 8h). The cookie is `ss`, `HttpOnly`, `SameSite=Strict`, `Path=/`.
+- **Mock login** at `GET /login` lists the seeded users. `POST /login` with a user id sets a user session.
+  - The session is a server-side row in `user_sessions` (`id`, `user_id`, `token_hash`, `expires_at` = 8h). The cookie is `sid`, `HttpOnly`, `SameSite=Strict`, `Path=/`.
   - The mock sits behind an `Identity` concept: production swaps the login route for SSO (OIDC), and the session/authorisation code is unchanged.
 - **Policy**, in one module (`access/policy.ts`):
 
@@ -191,7 +193,7 @@ Open ──(customer submits files)──▶ Received ──(banker or complianc
 | `request.close` | own requests | yes |
 | `audit.view` (per request and chain verification) | no | yes |
 
-- Customers never get a staff session and have no route that returns document bytes.
+- Customers never get a user session and have no route that returns document bytes.
 - **Denied:** respond 403 with a generic page, and write an audit event with `outcome = 'denied'` and the actor, target and IP. Covers AC-7.
 - **CSRF:** cookies are `SameSite=Strict`, and every state-changing POST checks that the `Origin` header matches `BASE_URL`. A missing or mismatched `Origin` is refused.
 
@@ -199,7 +201,7 @@ Open ──(customer submits files)──▶ Received ──(banker or complianc
 
 **Table `audit_events`:**
 - `seq` (bigserial, PK), `at`
-- `actor_type` (`staff` | `customer` | `system`), `actor_id` (staff user id, link id for customers, or `system`)
+- `actor_type` (`user` | `customer` | `system`), `actor_id` (user id, link id for customers, or `system`)
 - `action` (dotted name, e.g. `request.created`, `link.issued`, `otp.verify_failed`, `document.viewed`, `access.denied`)
 - `target_type`, `target_id`, `request_id` (nullable, for per-request queries)
 - `source_ip`, `outcome` (`success` | `failure` | `denied` | `suspicious`), `detail` (jsonb)
@@ -245,7 +247,7 @@ Open ──(customer submits files)──▶ Received ──(banker or complianc
 
 ## 7. Routes and pages
 
-Staff (session required):
+Signed-in users (session required):
 
 | Route | Page / effect |
 | --- | --- |
@@ -337,7 +339,7 @@ These live in `evidence/`. Each restates its content rather than linking here, a
 
 ## 11. Implementation chunks (one plan each, in order)
 
-1. **Foundation.** compose.yml (Postgres + RustFS), config schema, Drizzle schema + migrations (including the audit trigger and app role grants), seed, Elysia skeleton with security headers, request logging with masking, mock login + staff sessions, test harness.
+1. **Foundation.** compose.yml (Postgres + RustFS), config schema, Drizzle schema + migrations (including the audit trigger and app role grants), seed, Elysia skeleton with security headers, request logging with masking, mock login + user sessions, test harness.
 2. **Audit chain.** `audit.append` and `audit.verify`, and the AC-9 tests.
 3. **Requests and links.** Create, show-once, reissue/revoke, expiry, derived status, list/detail pages, close. Tests: AC-1, AC-5 (revoked/expired parts).
 4. **One-time code.** Customer link page, send/resend limits, verify, lockout, customer session, outbox page. Tests: AC-6.
