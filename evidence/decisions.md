@@ -56,7 +56,7 @@ Verification reports the first broken event and why (edited content, or a broken
 
 **Cost:**
 
-- Deleting the most recent events (tail truncation) can't be detected by the chain alone. Production should periodically copy the latest hash to write-once storage.
+- Deleting the most recent events (tail truncation) can't be detected by the chain alone. This needs the database owner role, and is an accepted risk for the slice (see verify.md). Production should periodically copy the latest hash to write-once storage.
 - The advisory lock serialises every audit write. That is fine at this scale but is a known scaling point.
 
 ## D4. The customer asks for the code, and resends are limited
@@ -79,43 +79,31 @@ Verification reports the first broken event and why (edited content, or a broken
 
 **How a send is recorded:** the code's hash, the link's send counter and the text message are written in one transaction. Locally the message is a row in the `outbox` table. In production the same table becomes a transactional outbox: a separate SMS relay reads new rows and hands them to the provider. Either way, a code is never counted as sent unless its message exists, and a message is never sent for a code that was rolled back.
 
-## D5. Expired is worked out when read, not stored
+## D5. Customer files are handled as untrusted content: typed by box, never rendered by the portal
 
-**Decision:** a request's stored status is only `open`, `received` or `closed`. "Expired" is shown when a request is open and its latest link has passed its 72-hour expiry. It's computed in one place whenever a request is read.
+**Decision:**
 
-Reissuing moves an expired request back to a usable Open: it revokes the active link, if any, and issues a new one in one transaction. Reissue first locks the request's row, so two reissues at the same moment run one after the other and can never leave two active links. The database's one-active-link index is the backstop.
-
-**Why:** there's no background job to run, monitor or fail, and the status can't drift from the link's real expiry.
-
-**Cost:** queries that filter on "expired" have to use the same expression rather than a simple column match.
-
-## D6. One file box per document type on the upload page
-
-**Decision:** the upload form has one file input per requested document type (each accepting several files), instead of a document-type dropdown beside each chosen file. The box a file comes through is its type.
+- **Upload:** the form has one file input per requested document type, each accepting several files, so the box a file comes through is its type. The server checks the real type from the file's first bytes, the size and completeness, and refuses the whole submission on any problem.
+- **Download:** every document is served as an attachment, with its content type taken from the detected type, `nosniff`, and a sanitised file name with the extension of the detected type. There is no inline viewer, so uploaded content is never rendered on the portal's origin. Downloading is how staff "view" a document, and each download is audited before any bytes are sent.
 
 **Why:**
 
-- A dropdown per file needs script to add a row for each chosen file, and the content security policy allows no inline script (D1).
-- The outcome is the same: every file is tagged with a requested type, and the server still refuses a submission that leaves a requested type empty or sends a file under a type that was not requested.
+- A per-file type dropdown needs script to add a row for each chosen file, and the content security policy allows no inline script (D1). One box per type gives the same outcome without script: every file is tagged with a requested type.
+- A customer's file is untrusted. Rendering it on the portal's origin, as a PDF in the browser viewer or an image a browser might sniff as HTML, would give a crafted file a chance to run alongside the staff session. An attachment goes to the operating system instead.
 
-**Cost:** a customer who puts a file in the wrong box sends it under the wrong type; the banker sees the type and the file name and can ask again.
+**Cost:**
 
-## D7. Documents are only ever downloaded, never shown inline
-
-**Decision:** every document is served as an attachment (`Content-Disposition: attachment`), with its content type taken from the detected file type, `nosniff`, and a sanitised file name. The portal has no inline viewer, so uploaded content is never rendered on the portal's own origin. Downloading is how a banker or compliance officer "views" a document, and each download is audited.
-
-**Why:** a customer's file is untrusted content. Rendering it on the portal's origin (a PDF in the browser's viewer, or an image a browser might sniff as HTML) would give a crafted file a chance to run in the same origin as the staff session. An attachment is handed to the operating system instead.
-
-**Cost:** reviewing is less convenient: each document opens outside the browser. Production could add a viewer on a separate, sandboxed origin that holds no session.
+- A file put in the wrong box is sent under the wrong type. The banker sees the type and file name and can ask again.
+- Each document opens outside the browser. Production could add a viewer on a separate, sandboxed origin that holds no session.
 
 ## Intentionally not built
 
-| Not built                                            | Why                                                                                         | Production path                                                                                    |
-| ---------------------------------------------------- | ------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------- |
-| Retention purge job (FR-15)                          | The retention date is recorded on every file, so deletion can be added without data changes | Scheduled job deletes expired files and writes an audit event for each                             |
-| Banker notifications (FR-16)                         | Status is visible in the portal                                                             | Email or in-app notification on upload                                                             |
-| Real malware scanning (FR-17)                        | The scan step exists and always passes                                                      | Asynchronous scan with quarantine; files viewable only once clean                                  |
-| Real SMS                                             | Codes appear on a mock outbox page                                                          | SMS provider behind the same interface                                                             |
-| Single sign-on                                       | Mock sign-in with seeded users and roles                                                    | The bank's identity provider via OIDC; sessions and authorisation code unchanged                   |
-| Cancellation, legal hold, bulk requests              | Outside the requested scope                                                                 | —                                                                                                  |
-| Encryption at rest, TLS, rate limiting, WCAG testing | Assumed at the infrastructure layer or outside scope                                        | Managed encrypted storage with KMS, TLS at the load balancer, WAF rate limits, accessibility audit |
+| Not built                                            | Why                                                                                         | Production path                                                                                                                            |
+| ---------------------------------------------------- | ------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| Retention purge job (FR-15)                          | The retention date is recorded on every file, so deletion can be added without data changes | Scheduled job deletes expired files and writes an audit event for each                                                                     |
+| Banker notifications (FR-16)                         | Status is visible in the portal                                                             | Email or in-app notification on upload                                                                                                     |
+| Real malware scanning (FR-17)                        | The scan step exists and always passes                                                      | Asynchronous scan with quarantine; files viewable only once clean                                                                          |
+| Real SMS                                             | Codes appear on a mock outbox page                                                          | SMS provider behind the same interface                                                                                                     |
+| Single sign-on                                       | Mock sign-in with seeded users and roles; anyone can sign in as any seeded user             | The bank's identity provider via OIDC; sessions and authorisation code unchanged. Remove the mock login route before any shared deployment |
+| Cancellation, legal hold, bulk requests              | Outside the requested scope                                                                 | —                                                                                                                                          |
+| Encryption at rest, TLS, rate limiting, WCAG testing | Assumed at the infrastructure layer or outside scope                                        | Managed encrypted storage with KMS, TLS at the load balancer, WAF rate limits, accessibility audit                                         |

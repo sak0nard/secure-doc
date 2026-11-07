@@ -5,6 +5,19 @@ Bankers request documents from customers. Customers upload through a single-use 
 - Requirements: `evidence/intent.md`
 - Design and evidence: `evidence/design.md`, `evidence/verify.md`, `evidence/operate.md`, `evidence/decisions.md`
 
+## What to look at first
+
+1. `evidence/verify.md`: results, the acceptance-criteria table (each criterion names its test), the walkthrough screenshots, review findings, known gaps and accepted risks.
+2. `evidence/decisions.md`: the five decisions that shape the portal, and what was intentionally not built.
+3. `evidence/design.md`: architecture, data flow, and the threat-by-threat security table.
+4. The rules, in `src/modules/`:
+   - `access/policy.ts`: the single authorisation table
+   - `audit/audit.ts`: the hash-chained audit log and its verifier
+   - `requests/`: requests and upload links
+   - `otp/`: one-time codes, lockout and customer sessions
+   - `documents/`: upload checks, submit and download naming
+5. The acceptance-criterion tests: search `tests/` for `AC-1` to `AC-9`.
+
 ## Run locally
 
 Requires Bun 1.4+ and Docker.

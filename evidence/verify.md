@@ -12,11 +12,16 @@ The tests run against real Postgres and RustFS in Docker, not in-memory fakes. T
 
 ## Latest results
 
-| Check               | Result                                       |
-| ------------------- | -------------------------------------------- |
-| `bun test`          | 184 pass, 0 fail (17 files, 1597 assertions) |
-| `bun run typecheck` | No type errors                               |
-| `bun fmt --check`   | All files formatted                          |
+Run on 2026-11-07 against the final commit, with the services freshly created from empty volumes:
+
+| Check                                  | Result                                                                                                                                          |
+| -------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| `bun test`                             | 187 pass, 0 fail (17 files, 1607 assertions)                                                                                                    |
+| `bun run typecheck`                    | No type errors in 54 files                                                                                                                      |
+| `bun fmt --check`                      | All 250 files are formatted                                                                                                                     |
+| `bun audit --audit-level=high`         | No vulnerabilities at high or above. One moderate advisory: esbuild's dev server, pulled in by drizzle-kit (dev-only; we never run that server) |
+| `bunx drizzle-kit generate`            | No schema changes: the committed migrations match the schema                                                                                    |
+| Clean start following only `README.md` | Every command exits 0 from a fresh clone with empty volumes; the bucket job creates both buckets                                                |
 
 ## What the tests prove
 
@@ -42,6 +47,9 @@ The tests run against real Postgres and RustFS in Docker, not in-memory fakes. T
 - POSTs without an `Origin` header, or from another origin, are refused with 403.
 - Unexpected errors return a generic 500 page. The details go to the server log, never to the client.
 - The client IP ignores `X-Forwarded-For` unless the proxy is trusted. When it is trusted, the IP comes from the entry the proxy appended, not from a value the client supplied.
+- A real browser form post, which sends `Origin: null` because of `Referrer-Policy: no-referrer`, is accepted only with `Sec-Fetch-Site: same-origin`. `Origin: null` from another site, or with no `Sec-Fetch-Site`, is refused, and so is a foreign `Origin`, whatever `Sec-Fetch-Site` claims.
+- Link tokens are masked even on malformed or oddly cased paths (`//u/<token>`, `/U/<token>`, any token-shaped segment).
+- Database errors are logged without their bound parameters, so codes, hashes and mobiles never reach the error log.
 
 **Audit chain** (`tests/audit.test.ts`)
 
@@ -172,19 +180,58 @@ The tests run against real Postgres and RustFS in Docker, not in-memory fakes. T
 
 ## Acceptance criteria
 
-| Acceptance criterion                                                     | Status                                                                                                                                                      |
-| ------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| A banker creates a request and sees the upload link exactly once         | Met: "AC-1: banker creates a request and sees the upload link exactly once"                                                                                 |
-| A valid link plus the correct code lets the customer upload a PDF        | Met: "AC-2: a valid link plus the correct code lets the customer upload a PDF"                                                                              |
-| A renamed executable with a .pdf extension is rejected                   | Met: "AC-3: a renamed executable is rejected and nothing is stored"                                                                                         |
-| A file over 10 MB is rejected                                            | Met: "AC-4: a file over 10 MB is rejected"                                                                                                                  |
-| A used, expired or reissued link is refused                              | Met: "AC-5: a used link is refused", "AC-5: a reissued (revoked) link is refused", "AC-5: an expired link is refused"                                       |
-| Five wrong codes lock the link and log a suspicious-activity event       | Met: "AC-6: five wrong codes lock the link and log a suspicious-activity event"                                                                             |
-| Another banker gets access denied, and the attempt is logged             | Met: "another banker is denied the detail page, and the attempt is logged", "AC-7: another banker is denied the document and the attempt is logged"         |
-| Compliance can view the document and the full audit trail                | Met: "AC-8: compliance can view the document and the full audit trail"                                                                                      |
-| Editing or deleting an audit event breaks the hash chain and is detected | Met: "AC-9: editing an audit event is detected", "AC-9: editing an event and recomputing its hash is detected", "AC-9: deleting an audit event is detected" |
+| Acceptance criterion                                                     | Status                                                                                                                                                                                                                                                                                     |
+| ------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| A banker creates a request and sees the upload link exactly once         | Met: "AC-1: banker creates a request and sees the upload link exactly once"                                                                                                                                                                                                                |
+| A valid link plus the correct code lets the customer upload a PDF        | Met: "AC-2: a valid link plus the correct code lets the customer upload a PDF"                                                                                                                                                                                                             |
+| A renamed executable with a .pdf extension is rejected                   | Met: "AC-3: a renamed executable is rejected and nothing is stored"                                                                                                                                                                                                                        |
+| A file over 10 MB is rejected                                            | Met: "AC-4: a file over 10 MB is rejected"                                                                                                                                                                                                                                                 |
+| A used, expired or reissued link is refused                              | Met: "AC-5: a used link is refused", "AC-5: a reissued (revoked) link is refused", "AC-5: an expired link is refused"                                                                                                                                                                      |
+| Five wrong codes lock the link and log a suspicious-activity event       | Met: "AC-6: five wrong codes lock the link and log a suspicious-activity event"                                                                                                                                                                                                            |
+| Another banker gets access denied, and the attempt is logged             | Met: "another banker is denied the detail page, and the attempt is logged", "AC-7: another banker is denied the document and the attempt is logged"                                                                                                                                        |
+| Compliance can view the document and the full audit trail                | Met: "AC-8: compliance can view the document and the full audit trail"                                                                                                                                                                                                                     |
+| Editing or deleting an audit event breaks the hash chain and is detected | Met: "AC-9: editing an audit event is detected", "AC-9: editing an event and recomputing its hash is detected", "AC-9: deleting an audit event is detected". Deleting only the newest events is not detected by the chain alone; this needs the owner role and is an accepted risk (below) |
 
 Every acceptance criterion is met, each by a named test.
+
+## Manual walkthrough
+
+The main journey and three alternate journeys were run by hand in Chromium against a fresh clone started from empty volumes. Customer pages were checked at phone width (360 px, Chromium mobile emulation): none scrolls sideways. Safari/WebKit was not tested.
+
+| Step                                                                      | Screenshot                                                                |
+| ------------------------------------------------------------------------- | ------------------------------------------------------------------------- |
+| Alice signs in (real browser form post)                                   | `screenshots/01-sign-in.png`                                              |
+| Alice requests a payslip and photo ID from Dana                           | `screenshots/02-new-request.png`                                          |
+| The upload link is shown once                                             | `screenshots/03-link-shown-once.png`                                      |
+| Dana opens the link on a phone                                            | `screenshots/04-customer-link-phone.png`                                  |
+| The code arrives in the mock outbox                                       | `screenshots/05-mock-outbox.png`                                          |
+| Dana enters the code                                                      | `screenshots/06-enter-code-phone.png`                                     |
+| Alternate: a renamed executable is rejected with its reason               | `screenshots/07-alt-renamed-executable-rejected.png`                      |
+| Dana uploads a PDF and a JPG                                              | `screenshots/08-upload-phone.png`, `screenshots/09-upload-done-phone.png` |
+| Alternate: the used link is refused                                       | `screenshots/10-alt-used-link-refused.png`                                |
+| Alice sees Received and the documents, and downloads one as an attachment | `screenshots/11-banker-request-received.png`                              |
+| Bob is refused the request and the document                               | `screenshots/12-other-banker-denied.png`                                  |
+| Carol sees the full audit trail and "Chain intact (17 events)"            | `screenshots/13-compliance-audit-trail.png`                               |
+| Alternate: five wrong codes lock the link                                 | `screenshots/14-alt-five-wrong-codes-locked.png`                          |
+| Alice sees "Link locked: reissue required"                                | `screenshots/15-banker-sees-link-locked.png`                              |
+| Alternate: after a reissue, the old link is refused                       | `screenshots/16-alt-reissued-link-refused.png`                            |
+
+## Review findings
+
+Two fresh reviews ran over the finished code, in addition to an earlier review of the foundation.
+
+**Independent code review** (everything after the foundation): no critical issues. Lock order, the single authorisation point, the upload pipeline and every AC test were judged sound. Fixed, each with a test that failed first:
+
+- Link tokens reached the request log on malformed paths such as `//u/<token>` or `/U/<token>`.
+- A database error message could carry bound parameters, including a raw code, into the error log.
+- An unknown upload field name of any length was copied into the permanent audit log; it is now recorded as `(other)`.
+
+**Security review** (whole codebase, using the security-review method): no high or medium findings. Fixed:
+
+- Local Docker ports listened on every network interface with published placeholder passwords; they now listen on 127.0.0.1 only.
+- CI actions were pinned to movable tags; they are now pinned to commit SHAs.
+
+The reviews' remaining minor points are listed under known gaps.
 
 ## Known gaps
 
@@ -197,20 +244,30 @@ Every acceptance criterion is met, each by a named test.
 - **Audit trail queries:** the portal shows the audit trail for one request at a time. Filtering by actor or date range is a production addition (NFR auditability); until then it is a database query (see operate.md).
 - **Chain verification cost:** the audit page verifies the whole chain on every view. That is fine at slice scale; in production it would verify incrementally from the last anchored hash.
 - **Not tested:** load, availability, accessibility (WCAG 2.1 AA), and behaviour behind a real TLS proxy.
+- **Browsers without Fetch Metadata are refused on every form post.** Under `no-referrer` they send `Origin: null` and no `Sec-Fetch-Site`, for example Safari on iOS before 16.4. A per-form CSRF token would cover them.
+- **Some refusals are not audited:** reissue or close in the wrong state (409), the scan gate on download (409), and a non-multipart upload body (400). Successful link opens and upload-page views are not audited either, so link previewers don't flood the log.
+- **`HEAD /documents/:id`** runs the download and writes a `document.downloaded` event without sending a body: extra events, never a missing one.
+- **Failed cleanup is silent:** if deleting an object after a failed upload also fails, nothing is logged.
+- **Mock login has no switch:** unlike the outbox page, the mock sign-in route is always on and lets anyone sign in as any seeded user. It must be removed before any shared deployment.
+- **Unbounded request body on every route:** the 101 MB cap applies to all routes; rate and size limits are assumed at the infrastructure layer.
+- **The audit trail's AC-8 test checks the compliance download's status only;** the byte-for-byte check is in the download tests.
 
 ## Accepted risks
 
-- **The database owner can empty or rewrite the audit table.** The row trigger does not block TRUNCATE, and the owner can disable the trigger. The app's role can do neither. This is accepted: the owner role is held only by the migration pipeline, not by the running app or day-to-day staff, and the production audit anchor (above) would reveal it.
+- **The database owner can empty, rewrite or truncate the newest part of the audit table.** The row trigger does not block TRUNCATE, the owner can disable the trigger, and deleting only the newest events leaves an intact-looking chain. The app's role can do none of this. Accepted: the owner role is held only by the migration pipeline, not by the running app or day-to-day staff, and locally the database listens on 127.0.0.1 only. Production would anchor the latest hash in write-once storage.
 
 ## Local versus pipeline
 
-| Check                                  | Locally                            | In a pull request pipeline                                                                                 |
-| -------------------------------------- | ---------------------------------- | ---------------------------------------------------------------------------------------------------------- |
-| Type check                             | `bun run typecheck`                | Yes                                                                                                        |
-| Unit and integration tests             | `bun test` against Docker services | Yes, with Postgres and RustFS as job services                                                              |
-| Migrations apply cleanly from empty    | Implicit in `bun test`             | Yes, plus a check that the generated migrations match the schema (`drizzle-kit generate` produces no diff) |
-| Dependency vulnerability audit         | Optional                           | Yes, failing on high severity                                                                              |
-| Secret scanning                        | Optional                           | Yes, on every push                                                                                         |
-| Static analysis for security (SAST)    | —                                  | Yes                                                                                                        |
-| Container image scan                   | —                                  | Yes, on the release image                                                                                  |
-| Browser smoke test of the main journey | Optional (Playwright)              | Yes, against a deployed preview                                                                            |
+The pipeline is defined in `.github/workflows/ci.yml`. It has not been run here (the repository has no remote); every command in it was run locally and passes.
+
+| Check                                                  | Locally                                        | In `ci.yml`                                                                |
+| ------------------------------------------------------ | ---------------------------------------------- | -------------------------------------------------------------------------- |
+| Format                                                 | `bun fmt --check`                              | Yes                                                                        |
+| Type check                                             | `bun run typecheck`                            | Yes                                                                        |
+| Dependency audit, failing on high or critical          | `bun audit --audit-level=high`                 | Yes                                                                        |
+| Unit and integration tests against Postgres and RustFS | `bun test` against Docker services             | Yes, as job services set up with the same init script and bucket           |
+| Migrations match the schema                            | `bunx drizzle-kit generate` produces no change | Yes, failing on any diff                                                   |
+| Browser walkthrough of the main journey                | By hand with Playwright (above)                | Planned: automate against a deployed preview                               |
+| Secret scanning                                        | —                                              | Planned: GitHub secret scanning or gitleaks, enabled at organisation level |
+| Static analysis for security (SAST)                    | Security review (above)                        | Planned: CodeQL or semgrep                                                 |
+| Container image scan                                   | —                                              | Planned: on the release image, once one is built                           |

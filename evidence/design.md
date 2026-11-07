@@ -230,6 +230,7 @@ One function, `authorise(user, action, request)`, decides every access. It reads
 - **One submission per link:** a submission is all-or-nothing, so "single-use" is unambiguous. If the customer needs to send more, the banker raises a new request.
 - **Synchronous scan step:** simple and enough for the always-clean mock. A real scanner would run asynchronously, with files held until clean.
 - **Serialised audit writes:** guarantee one unbroken chain, but limit audit write throughput.
+- **Expired is worked out when read, not stored:** a request stores only `open`, `received` or `closed`. "Expired" is shown when it is open and its latest link is past its 72-hour expiry, computed in one place. No background job can fail or drift; the cost is that any query filtering on "expired" must use the same expression. Reissue locks the request row, so two reissues at once can never leave two active links.
 
 ## Production and cloud shape
 
