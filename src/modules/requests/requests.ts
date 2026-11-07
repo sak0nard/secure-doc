@@ -16,6 +16,14 @@ import {
 export const DOCUMENT_TYPES = documentType.enumValues
 export type DocumentType = (typeof DOCUMENT_TYPES)[number]
 
+/** How each document type is named to people, on pages and in rejection reasons. */
+export const DOCUMENT_LABELS: Record<DocumentType, string> = {
+  payslip: 'Payslip',
+  bank_statement: 'Bank statement',
+  photo_id: 'Photo ID',
+  other: 'Other',
+}
+
 export type Customer = { id: string; name: string; mobile: string }
 
 /** Stands in for the customer master record. */
