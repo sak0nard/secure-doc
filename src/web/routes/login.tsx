@@ -1,9 +1,8 @@
-import { eq } from "drizzle-orm";
 import { Elysia } from "elysia";
 import { z } from "zod";
-import { users } from "../../db/schema";
 import type { Deps } from "../../deps";
 import { createUserSession, endUserSession, USER_SESSION_TTL_MS } from "../../modules/access/sessions";
+import { findUser, listUsers } from "../../modules/access/users";
 import { Layout, page } from "../render";
 import { readCookie, requireUser, SESSION_COOKIE } from "../session";
 
@@ -22,7 +21,7 @@ export function loginRoutes(deps: Deps) {
 
   return new Elysia()
     .get("/login", async () => {
-      const all = await deps.db.select().from(users).orderBy(users.name);
+      const all = await listUsers(deps.db);
       return page(
         <Layout title="Sign in">
           <h1>Sign in</h1>
@@ -41,8 +40,8 @@ export function loginRoutes(deps: Deps) {
     .post("/login", async ({ body }) => {
       const parsed = LoginForm.safeParse(body);
       const user = parsed.success
-        ? (await deps.db.select().from(users).where(eq(users.id, parsed.data.userId)))[0]
-        : undefined;
+        ? await findUser(deps.db, parsed.data.userId)
+        : null;
       if (!user) {
         return page(
           <Layout title="Sign in">

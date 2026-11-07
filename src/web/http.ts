@@ -22,7 +22,8 @@ type IpServer = { requestIP(req: Request): { address: string } | null } | null |
 
 export function sourceIp(request: Request, server: IpServer, trustProxy: boolean): string {
   if (trustProxy) {
-    const forwarded = request.headers.get("x-forwarded-for")?.split(",")[0]?.trim();
+    // The trusted proxy appends the address it saw; anything to its left is client-supplied.
+    const forwarded = request.headers.get("x-forwarded-for")?.split(",").at(-1)?.trim();
     if (forwarded) return forwarded;
   }
   return server?.requestIP(request)?.address ?? "unknown";

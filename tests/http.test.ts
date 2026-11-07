@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
-import { maskTokens } from "../src/web/http";
+import type { Deps } from "../src/deps";
+import { maskTokens, sourceIp } from "../src/web/http";
 import { get, post, testApp } from "./helpers";
 
 test("security headers on every response, including 404", async () => {
@@ -35,4 +36,37 @@ test("POST without Origin is refused", async () => {
 
 test("POST from a foreign Origin is refused", async () => {
   expect((await post(testApp().app, "/logout", {}, { origin: "https://evil.example" })).status).toBe(403);
+});
+
+test("unexpected errors return a generic 500 page and are logged, never shown", async () => {
+  const failingDb = {
+    select() {
+      throw new Error('Failed query: select "token_hash" from "user_sessions" params: deadbeef');
+    },
+  } as unknown as Deps["db"];
+  const { app, logs } = testApp({ db: failingDb });
+  const res = await get(app, "/u/SECRETTOKENVALUE/x", { cookie: "sid=abc" });
+  const home = await get(app, "/", { cookie: "sid=abc" });
+  expect(home.status).toBe(500);
+  const body = await home.text();
+  expect(body).not.toContain("Failed query");
+  expect(body).not.toContain("deadbeef");
+  expect(home.headers.get("referrer-policy")).toBe("no-referrer");
+  await Bun.sleep(5); // the log hook runs after the response is sent
+  expect(logs.some((l) => l.includes("Failed query"))).toBe(true);
+  expect(logs.join("\n")).not.toContain("SECRETTOKENVALUE");
+  expect(res.status).toBe(404);
+});
+
+test("source IP ignores X-Forwarded-For unless the proxy is trusted", () => {
+  const req = new Request("http://x/", { headers: { "x-forwarded-for": "10.0.0.1, 203.0.113.9" } });
+  const server = { requestIP: () => ({ address: "192.0.2.5" }) };
+  expect(sourceIp(req, server, false)).toBe("192.0.2.5");
+});
+
+test("source IP behind a trusted proxy is the entry the proxy appended, not a client-supplied one", () => {
+  const req = new Request("http://x/", { headers: { "x-forwarded-for": "10.0.0.1, 203.0.113.9" } });
+  const server = { requestIP: () => ({ address: "192.0.2.5" }) };
+  expect(sourceIp(req, server, true)).toBe("203.0.113.9");
+  expect(sourceIp(new Request("http://x/"), server, true)).toBe("192.0.2.5");
 });

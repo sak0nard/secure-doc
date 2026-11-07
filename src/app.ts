@@ -16,6 +16,18 @@ export function createApp(deps: Deps) {
         return "Forbidden";
       }
     })
+    .onError(({ code, error, request, set }) => {
+      if (code === "NOT_FOUND") return;
+      if (code === "VALIDATION" || code === "PARSE") {
+        set.status = 400;
+        return "Bad Request";
+      }
+      // Never show internals (SQL, parameters, stack) to the client; keep them in the server log.
+      const path = maskTokens(new URL(request.url).pathname);
+      deps.log(`ERROR ${request.method} ${path}: ${error instanceof Error ? error.message : String(error)}`);
+      set.status = 500;
+      return "Something went wrong. Please try again.";
+    })
     .onAfterResponse(({ request, set, responseValue }) => {
       // Handlers that return a Response carry their own status; set.status only covers the rest.
       const status = responseValue instanceof Response ? responseValue.status : (set.status ?? 200);
