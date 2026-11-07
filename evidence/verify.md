@@ -14,11 +14,11 @@ The tests run against real Postgres and RustFS in Docker, not in-memory fakes. T
 
 | Check               | Result                                       |
 | ------------------- | -------------------------------------------- |
-| `bun test`          | 156 pass, 0 fail (14 files, 1502 assertions) |
+| `bun test`          | 184 pass, 0 fail (17 files, 1597 assertions) |
 | `bun run typecheck` | No type errors                               |
 | `bun fmt --check`   | All files formatted                          |
 
-## What the tests prove so far
+## What the tests prove
 
 **Configuration** (`tests/config.test.ts`)
 
@@ -146,6 +146,30 @@ The tests run against real Postgres and RustFS in Docker, not in-memory fakes. T
 - Two tabs submitting at once on one session: exactly one gets 200 and the other 403; only the winner's documents exist, and the loser's objects are deleted.
 - The banker's request page lists each document's file name, type and scan status.
 
+**Downloads** (`tests/download-name.test.ts`, `tests/download.test.ts`)
+
+- Download names: ordinary names are kept; the extension always comes from the detected type (`scan.PNG` detected as JPEG downloads as `scan.jpg`). Quotes, CR/LF, `;`, path separators and non-ASCII characters are replaced, so the `Content-Disposition` header has no line break. A name with nothing left becomes `document`; names are capped at 80 characters plus the extension.
+- The requesting banker downloads a document: 200, the same bytes that were uploaded, `Content-Type: application/pdf`, `Content-Disposition: attachment; filename="…"` and `nosniff`. One `document.downloaded` event records the banker, the document, the request and the SHA-256.
+- AC-7: another banker gets 403 with the generic page and no document bytes; an `access.denied` event records Bob, the document, the request and the refused action `document.download`.
+- Compliance can download any document.
+- A document whose scan is still pending answers 409 "This document is still being checked." to the banker and to compliance, and writes no download event.
+- A document row whose object is missing answers 404 "This document isn't available." and logs an `ERROR` line with the document id but not the file name.
+- When the download's audit event cannot be written, the answer is the generic 500 and no bytes are sent.
+- A customer upload-session cookie gives no staff access: `/documents/:id` redirects to `/login`.
+- Malformed and unknown document ids get 404.
+- On the request page, a file name links to its download for the banker and compliance only while the document is clean; while pending, it is plain text with `pending` shown.
+
+**Compliance audit trail** (`tests/compliance.test.ts`, `tests/requests.test.ts`)
+
+- AC-8: after a full journey (create, code, verify, upload, the banker downloads), compliance downloads the document and opens the audit page. It lists `request.created`, `link.issued`, `otp.sent`, `otp.verified`, `document.uploaded`, `request.received` and `document.downloaded` in that order, names Alice and the customer as actors, shows the source IP column and "Chain intact". Viewing it writes `audit.viewed`.
+- After an event's detail is edited as the database owner, the page shows `Chain broken at event #<that event> (content edited)`.
+- The owning banker is refused the audit page (403), and an `access.denied` event records the refused action `audit.view`.
+- The page shows only this request's events.
+- A user named `<script>x</script>` appears escaped.
+- Unknown and malformed request ids get 404.
+- Only compliance sees the "Audit trail" link on the request page.
+- The link line on the request page reads `Link: active until <ISO time>` while the link is usable, and `Link: locked`, `Link: used` or `Link: expired` otherwise.
+
 ## Acceptance criteria
 
 | Acceptance criterion                                                     | Status                                                                                                                                                      |
@@ -156,11 +180,11 @@ The tests run against real Postgres and RustFS in Docker, not in-memory fakes. T
 | A file over 10 MB is rejected                                            | Met: "AC-4: a file over 10 MB is rejected"                                                                                                                  |
 | A used, expired or reissued link is refused                              | Met: "AC-5: a used link is refused", "AC-5: a reissued (revoked) link is refused", "AC-5: an expired link is refused"                                       |
 | Five wrong codes lock the link and log a suspicious-activity event       | Met: "AC-6: five wrong codes lock the link and log a suspicious-activity event"                                                                             |
-| Another banker gets access denied, and the attempt is logged             | Partly met for request pages: "another banker is denied the detail page, and the attempt is logged". Documents come later                                   |
-| Compliance can view the document and the full audit trail                | Not yet built                                                                                                                                               |
+| Another banker gets access denied, and the attempt is logged             | Met: "another banker is denied the detail page, and the attempt is logged", "AC-7: another banker is denied the document and the attempt is logged"         |
+| Compliance can view the document and the full audit trail                | Met: "AC-8: compliance can view the document and the full audit trail"                                                                                      |
 | Editing or deleting an audit event breaks the hash chain and is detected | Met: "AC-9: editing an audit event is detected", "AC-9: editing an event and recomputing its hash is detected", "AC-9: deleting an audit event is detected" |
 
-Each criterion will get its own named test.
+Every acceptance criterion is met, each by a named test.
 
 ## Known gaps
 
@@ -170,6 +194,8 @@ Each criterion will get its own named test.
 - **Request list scale:** the list reads every request and keeps the ones the policy allows, so the policy stays the only access decision. At production volumes it needs a database filter derived from the same policy, and paging.
 - **Orphan objects:** objects are written before the database transaction commits. A crash between the write and the commit (or a failed best-effort delete) leaves an object with no `documents` row. It is unreachable, because every read goes through a row; in production the purge job would sweep keys with no row.
 - **Body size limit is configuration only:** the 101 MB request-body cap is set on the server, but the tests drive the app without a server, so it is not exercised.
+- **Audit trail queries:** the portal shows the audit trail for one request at a time. Filtering by actor or date range is a production addition (NFR auditability); until then it is a database query (see operate.md).
+- **Chain verification cost:** the audit page verifies the whole chain on every view. That is fine at slice scale; in production it would verify incrementally from the last anchored hash.
 - **Not tested:** load, availability, accessibility (WCAG 2.1 AA), and behaviour behind a real TLS proxy.
 
 ## Accepted risks

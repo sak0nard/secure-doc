@@ -64,7 +64,7 @@ A trigger also rejects any `UPDATE` or `DELETE` on `audit_events`, even from the
 
 - The app writes one line per request to stdout: `METHOD path status duration`, for example `POST /login 303 12ms`.
 - Customer link tokens are masked: `/u/<token>` is logged as `/u/****`.
-- Who did what is recorded in the audit log (`audit_events`), not in request logs. Sign-in, request and link changes, request views, refused links, one-time codes and denied access are audited today. To read one request's events in order:
+- Who did what is recorded in the audit log (`audit_events`), not in request logs. Sign-in, request and link changes, request views, refused links, one-time codes, uploads, downloads, audit-trail views and denied access are audited. To read one request's events in order:
 
   ```bash
   psql "$DATABASE_URL" -c "select seq, at, actor_type, actor_id, action, outcome, source_ip
@@ -72,6 +72,7 @@ A trigger also rejects any `UPDATE` or `DELETE` on `audit_events`, even from the
   ```
 
 - Unexpected errors are logged as `ERROR METHOD path: message`, with the path masked the same way, and the client gets a generic 500 page.
+- A document whose stored object is missing is logged as `ERROR GET /documents/<id>: stored object is missing`; the user gets a 404 "This document isn't available." Check storage for the key in that document's row.
 
 ## Status
 
@@ -97,17 +98,36 @@ A trigger also rejects any `UPDATE` or `DELETE` on `audit_events`, even from the
 - **Rotating `OTP_PEPPER`** invalidates only codes that are outstanding at that moment; customers request a new code. Links, sessions and documents are unaffected.
 - Code activity is audited as `otp.sent`, `otp.send_refused`, `otp.verified`, `otp.verify_failed` and `otp.locked`.
 
+## How compliance checks the audit chain
+
+- A compliance officer opens a request and follows "Audit trail" (`/requests/<id>/audit`). Bankers are refused, and the refusal is logged.
+- The line above the table verifies the **whole** audit log, every request and sign-in, not just this request:
+  - `Chain intact (N events)`: every event's content matches its hash and links to the one before.
+  - `Chain broken at event #seq (content edited)`: that event was changed after it was written.
+  - `Chain broken at event #seq (link broken)`: the event before it was deleted, events were reordered, or a hash was recomputed to hide an edit.
+- The table lists the request's events in order, with actor, action, target, outcome, source IP and detail. Each view is itself audited as `audit.viewed`.
+- A break means someone with database owner rights changed the log, since the app cannot. Treat it as a security incident (see the failure-modes table): keep the database as it is, compare with the anchored head hash (production), and find who held the owner role.
+- Deleting only the newest events is not visible to the chain; the anchored head hash (production) covers that.
+- **Queries by actor and date range** are not in the portal yet. Until they are, run them against the database:
+
+  ```bash
+  psql "$DATABASE_URL" -c "select seq, at, actor_type, actor_id, action, target_type, target_id, request_id, outcome, source_ip
+    from audit_events
+    where actor_id = '<user id>' and at >= '2026-11-01' and at < '2026-12-01'
+    order by seq"
+  ```
+
 ## Failure modes
 
-| Failure                                                | What happens                                                                                                                                                                                                                         | What to do                                                                   |
-| ------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------- |
-| Invalid or missing configuration                       | The app refuses to start and lists every bad variable                                                                                                                                                                                | Fix the environment and restart                                              |
-| Database unreachable                                   | Requests fail with a generic 500 page; the error is logged with details                                                                                                                                                              | Restore the database; the app recovers without a restart                     |
-| Object storage unreachable                             | An upload answers 503 "We couldn't process your files right now. Please try again." Objects already written are deleted, no rows are written, and the customer's session stays open. _Designed:_ downloads fail with a generic error | Restore storage; customers retry within their session or the banker reissues |
-| SMS provider down                                      | _Designed:_ the code send fails and the customer is asked to try again. The attempt still counts toward the resend limit only if a message was actually sent                                                                         | Restore the provider                                                         |
-| Malware scanner down                                   | Fail closed: an upload answers 503 with the same retry message; nothing is stored and the session stays open. (Production, with asynchronous scanning: files stay pending and cannot be viewed until scanned)                        | Restore the scanner, then rescan pending files                               |
-| Crash between storing a file and committing its record | An orphan object with no database row. It can't be reached, because every read goes through a database row                                                                                                                           | A periodic sweep removes objects with no row (production)                    |
-| Audit chain broken                                     | The compliance audit page reports the first broken event                                                                                                                                                                             | Treat as a security incident; compare with the anchored hash                 |
+| Failure                                                | What happens                                                                                                                                                                                                                                                 | What to do                                                                   |
+| ------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------- |
+| Invalid or missing configuration                       | The app refuses to start and lists every bad variable                                                                                                                                                                                                        | Fix the environment and restart                                              |
+| Database unreachable                                   | Requests fail with a generic 500 page; the error is logged with details                                                                                                                                                                                      | Restore the database; the app recovers without a restart                     |
+| Object storage unreachable                             | An upload answers 503 "We couldn't process your files right now. Please try again." Objects already written are deleted, no rows are written, and the customer's session stays open. A download fails with the generic 500 page and writes no download event | Restore storage; customers retry within their session or the banker reissues |
+| SMS provider down                                      | _Designed:_ the code send fails and the customer is asked to try again. The attempt still counts toward the resend limit only if a message was actually sent                                                                                                 | Restore the provider                                                         |
+| Malware scanner down                                   | Fail closed: an upload answers 503 with the same retry message; nothing is stored and the session stays open. (Production, with asynchronous scanning: files stay pending and cannot be viewed until scanned)                                                | Restore the scanner, then rescan pending files                               |
+| Crash between storing a file and committing its record | An orphan object with no database row. It can't be reached, because every read goes through a database row                                                                                                                                                   | A periodic sweep removes objects with no row (production)                    |
+| Audit chain broken                                     | The compliance audit page reports the first broken event                                                                                                                                                                                                     | Treat as a security incident; compare with the anchored hash                 |
 
 ## Rollback and degrade
 

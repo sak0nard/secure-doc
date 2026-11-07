@@ -100,6 +100,14 @@ Reissuing moves an expired request back to a usable Open: it revokes the active 
 
 **Cost:** a customer who puts a file in the wrong box sends it under the wrong type; the banker sees the type and the file name and can ask again.
 
+## D7. Documents are only ever downloaded, never shown inline
+
+**Decision:** every document is served as an attachment (`Content-Disposition: attachment`), with its content type taken from the detected file type, `nosniff`, and a sanitised file name. The portal has no inline viewer, so uploaded content is never rendered on the portal's own origin. Downloading is how a banker or compliance officer "views" a document, and each download is audited.
+
+**Why:** a customer's file is untrusted content. Rendering it on the portal's origin (a PDF in the browser's viewer, or an image a browser might sniff as HTML) would give a crafted file a chance to run in the same origin as the staff session. An attachment is handed to the operating system instead.
+
+**Cost:** reviewing is less convenient: each document opens outside the browser. Production could add a viewer on a separate, sandboxed origin that holds no session.
+
 ## Intentionally not built
 
 | Not built                                            | Why                                                                                         | Production path                                                                                    |
