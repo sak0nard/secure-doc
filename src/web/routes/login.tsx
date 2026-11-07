@@ -11,7 +11,7 @@ import { findUser, listUsers } from '../../modules/access/users'
 import { appendAudit } from '../../modules/audit/audit'
 import { sourceIp } from '../http'
 import { Layout, page } from '../render'
-import { readCookie, requireUser, SESSION_COOKIE } from '../session'
+import { readCookie, SESSION_COOKIE } from '../session'
 
 const LoginForm = z.object({ userId: z.uuid() })
 
@@ -110,17 +110,4 @@ export function loginRoutes(deps: Deps) {
       })
       return redirect('/login', sessionCookie('', 0))
     })
-    .use(requireUser(deps))
-    .get('/', ({ user }) =>
-      page(
-        <Layout title="Home">
-          <p>
-            Signed in as {user!.name} ({user!.role})
-          </p>
-          <form method="post" action="/logout">
-            <button type="submit">Sign out</button>
-          </form>
-        </Layout>
-      )
-    )
 }
