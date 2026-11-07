@@ -77,6 +77,8 @@ Verification reports the first broken event and why (edited content, or a broken
 - The customer flow has one extra tap, which differs from the literal wording of FR-5.
 - Code resends (FR-7) were originally out of scope; they are now in scope.
 
+**How a send is recorded:** the code's hash, the link's send counter and the text message are written in one transaction. Locally the message is a row in the `outbox` table. In production the same table becomes a transactional outbox: a separate SMS relay reads new rows and hands them to the provider. Either way, a code is never counted as sent unless its message exists, and a message is never sent for a code that was rolled back.
+
 ## D5. Expired is worked out when read, not stored
 
 **Decision:** a request's stored status is only `open`, `received` or `closed`. "Expired" is shown when a request is open and its latest link has passed its 72-hour expiry. It's computed in one place whenever a request is read.

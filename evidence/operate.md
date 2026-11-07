@@ -58,7 +58,7 @@ A trigger also rejects any `UPDATE` or `DELETE` on `audit_events`, even from the
 
 - The app writes one line per request to stdout: `METHOD path status duration`, for example `POST /login 303 12ms`.
 - Customer link tokens are masked: `/u/<token>` is logged as `/u/****`.
-- Who did what is recorded in the audit log (`audit_events`), not in request logs. Sign-in, request and link changes, request views, refused links and denied access are audited today. To read one request's events in order:
+- Who did what is recorded in the audit log (`audit_events`), not in request logs. Sign-in, request and link changes, request views, refused links, one-time codes and denied access are audited today. To read one request's events in order:
 
   ```bash
   psql "$DATABASE_URL" -c "select seq, at, actor_type, actor_id, action, outcome, source_ip
@@ -82,7 +82,14 @@ A trigger also rejects any `UPDATE` or `DELETE` on `audit_events`, even from the
 
 - A reissued link replaces the old one at once; the old link shows the customer the generic "no longer valid" page.
 - A lost link can't be shown again. Reissue it.
-- `/dev/outbox` (only with `MOCK_OUTBOX_ENABLED=true`) will show mock SMS messages.
+
+## One-time codes
+
+- **Mock SMS:** `/dev/outbox` lists the mock text messages, newest first, including the codes in full. It is mounted only when `MOCK_OUTBOX_ENABLED=true`; otherwise it is 404. It must be off in production (`MOCK_OUTBOX_ENABLED=false`), where a real SMS provider replaces the outbox.
+- **A customer is locked out** (five wrong codes; the banker's list shows "Link locked"): check with the customer through the usual channel that the attempts were theirs, then reissue the link from the request page and send them the new link. The new link has a fresh allowance of codes and attempts. The lockout is recorded as an `otp.locked` event with outcome `suspicious`.
+- **A customer used up their codes** (three per link) and still has none that works: reissue the link.
+- **Rotating `OTP_PEPPER`** invalidates only codes that are outstanding at that moment; customers request a new code. Links, sessions and documents are unaffected.
+- Code activity is audited as `otp.sent`, `otp.send_refused`, `otp.verified`, `otp.verify_failed` and `otp.locked`.
 
 ## Failure modes
 
