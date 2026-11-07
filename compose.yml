@@ -1,0 +1,36 @@
+services:
+  postgres:
+    image: postgres:18
+    environment:
+      POSTGRES_USER: secure_doc_owner
+      POSTGRES_PASSWORD: ${OWNER_DB_PASSWORD:-owner_local_only}
+      POSTGRES_DB: secure_doc
+      APP_DB_PASSWORD: ${APP_DB_PASSWORD:-app_local_only}
+    ports:
+      - "${PG_HOST_PORT:-5433}:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql
+      - ./docker/postgres/init.sh:/docker-entrypoint-initdb.d/init.sh:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U secure_doc_owner -d secure_doc"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  rustfs:
+    image: rustfs/rustfs:1.0.3
+    environment:
+      RUSTFS_ACCESS_KEY: ${S3_ACCESS_KEY_ID:-rustfs_local}
+      RUSTFS_SECRET_KEY: ${S3_SECRET_ACCESS_KEY:-rustfs_local_secret}
+      RUSTFS_VOLUMES: /data
+      RUSTFS_ADDRESS: ":9000"
+      RUSTFS_CONSOLE_ENABLE: "true"
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - rustfsdata:/data
+
+volumes:
+  pgdata:
+  rustfsdata:
