@@ -23,7 +23,22 @@
 
 **Spec:** `docs/superpowers/specs/2026-11-07-secure-doc-portal-design.md` (§5 documents; §6.3 submit; §6.4; §9 AC-2/3/4/5 rows)
 
-**Depends on chunks 3–4:** `resolveCustomerSession`, `endCustomerSession`, `CUSTOMER_COOKIE`, `ActionContext`, `appendAudit`, `createRequestVia` (with `documentTypes` and `linkId`, from chunk 4), `bodyText`, `auditAction`, and code-verify helpers in tests. Take every row lock before the first audit write in a transaction. Chunk 3's detail page gains a document list here. If names differ, use the landed ones and ledger a ruling.
+**Depends on chunks 3–4 (merged; use these exact names):**
+
+- `src/modules/otp/sessions.ts`:
+  - `CUSTOMER_COOKIE = 'cs'`, `type CustomerSession = { sessionId; linkId; requestId }`
+  - `resolveCustomerSession(db, token, now) → CustomerSession | null`. Valid only while the link is `active` and unexpired, so marking the link `used` also ends the session.
+  - `endCustomerSession(tx, sessionId, now)`, which is safe to call twice.
+- `src/web/routes/customer.tsx`, inside `customerRoutes(deps)`:
+  - the closure `customerSession(request)` and `sessionEndedPage()` (the 403 page)
+  - `GET /u/upload` is a placeholder to replace; `POST /u/upload` isn't registered yet
+- `src/modules/requests/links.ts`: `resolveLink(db, token, now, opts?: { lock?: boolean })`.
+- `src/modules/audit/audit.ts`: `ActionContext`, `auditAction(tx, ctx, e)`, `appendAudit`, `verifyChain`.
+- `src/web/render.tsx`: `DOCUMENT_LABELS` and `types(t)`. Reuse these labels for the per-type file inputs and the `Missing: {label}` reason.
+- `tests/helpers.ts`:
+  - `customerSessionVia(app, { documentTypes? , banker?, customer? }) → { requestId, token, linkId, cookie, customerCookie }`. `cookie` is the banker's `sid=…`; pass `customerCookie` as the `cookie` option for `/u/upload`.
+  - `createRequestVia`, `latestOutboxCode`, `bodyText`, `signIn`, `tamperAsOwner`.
+- **Lock order:** take the `upload_links` row lock (`.for('update')`) first, before any audit write in the submit transaction. Lock only the link row, as chunk 4 does.
 
 ## Global Constraints
 
@@ -194,7 +209,7 @@ evidence/*.md                            (modify)
     - The note `PDF, JPG or PNG, up to 10 MB each.`
     - The submit button `Send documents`.
     - `enctype="multipart/form-data"`.
-  - `POST /u/upload`: collect the files from the multipart body. Check how Elysia exposes repeated file fields and see chunk 3's ruling on form parsing; `request.formData()` with `getAll(type)` is the fallback. Then call `submitUpload` and map the result:
+  - `POST /u/upload`: collect the files from the multipart body. Check how Elysia exposes repeated file fields (chunk 3 posted repeated keys as `[key, value][]` pairs); `request.formData()` with `getAll(type)` is the fallback. Then call `submitUpload` and map the result:
     - `submitted` → 200 thank-you
     - `rejected` → 422 with the reasons and the form
     - `session_ended` → 403
@@ -202,7 +217,7 @@ evidence/*.md                            (modify)
   - Request detail page (`GET /requests/:id`): the "Documents" section lists each document (type label, original name, detected type, size, uploaded time, scan status) instead of "None yet".
 
 - [ ] **Step 1: Write failing tests** in `tests/uploads.test.ts` (`beforeEach(resetDb)`):
-  - Helper `verifiedSession(app)`: `createRequestVia(app, { documentTypes: ['payslip', 'photo_id'] })`, send a code, verify, and return `{ cs, token, requestId }`.
+  - Helper: use `customerSessionVia(app, { documentTypes: ['payslip', 'photo_id'] })`; its `customerCookie` is the `cs` cookie used below.
   - Helper `upload(app, cs, parts: { field, name, bytes, type? }[])`: builds a multipart `FormData` POST with the same-site Origin.
   - Tests:
     - `"AC-2: a valid link plus the correct code lets the customer upload a PDF"`:
