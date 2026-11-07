@@ -103,7 +103,23 @@ const size = (bytes: number) =>
     ? `${Math.max(1, Math.round(bytes / 1024))} KB`
     : `${(bytes / (1024 * 1024)).toFixed(1)} MB`
 
-function DocumentList({ docs }: { docs: DocumentSummary[] }) {
+/** The current link's state as staff read it. Only a usable link shows its end time. */
+function linkLine(link: RequestDetail['link'], now: Date): string {
+  if (!link) return 'Link: none'
+  if (link.state !== 'active') return `Link: ${link.state}`
+  return now.getTime() < link.expiresAt.getTime()
+    ? `Link: active until ${link.expiresAt.toISOString()}`
+    : 'Link: expired'
+}
+
+/** Names link to the download only for a viewer who may download and a clean document. */
+function DocumentList({
+  docs,
+  canDownload,
+}: {
+  docs: DocumentSummary[]
+  canDownload: boolean
+}) {
   if (docs.length === 0) return <p>None yet.</p>
   return (
     <table>
@@ -121,7 +137,13 @@ function DocumentList({ docs }: { docs: DocumentSummary[] }) {
         {docs.map((d) => (
           <tr key={d.id}>
             <td>{DOCUMENT_LABELS[d.documentType]}</td>
-            <td>{d.originalFilename}</td>
+            <td>
+              {canDownload && d.scanStatus === 'clean' ? (
+                <a href={`/documents/${d.id}`}>{d.originalFilename}</a>
+              ) : (
+                d.originalFilename
+              )}
+            </td>
             <td>{d.detectedType.toUpperCase()}</td>
             <td>{size(d.sizeBytes)}</td>
             <td>{when(d.uploadedAt)}</td>
@@ -133,7 +155,7 @@ function DocumentList({ docs }: { docs: DocumentSummary[] }) {
   )
 }
 
-function detailPage(r: RequestDetail, docs: DocumentSummary[], user: User) {
+function detailPage(r: RequestDetail, docs: DocumentSummary[], user: User, now: Date) {
   const canReissue =
     authorise(user, 'request.reissue', r) && r.stored === CHANGE_ALLOWED_FROM.reissue
   const canClose =
@@ -158,11 +180,13 @@ function detailPage(r: RequestDetail, docs: DocumentSummary[], user: User) {
           {r.status.label}
           {r.status.linkLocked && <strong> · Link locked: reissue required</strong>}
         </dd>
-        <dt>Upload link</dt>
-        <dd>
-          {r.link ? `${r.link.state}, valid until ${when(r.link.expiresAt)}` : 'None'}
-        </dd>
       </dl>
+      <p>{linkLine(r.link, now)}</p>
+      {authorise(user, 'audit.view', r) && (
+        <p>
+          <a href={`/requests/${r.id}/audit`}>Audit trail</a>
+        </p>
+      )}
       {canReissue && (
         <form method="post" action={`/requests/${r.id}/reissue`}>
           <button type="submit">Reissue link</button> The current link stops working.
@@ -174,7 +198,7 @@ function detailPage(r: RequestDetail, docs: DocumentSummary[], user: User) {
         </form>
       )}
       <h2>Documents</h2>
-      <DocumentList docs={docs} />
+      <DocumentList docs={docs} canDownload={authorise(user, 'document.download', r)} />
     </Layout>
   )
 }
@@ -387,7 +411,7 @@ export function requestRoutes(deps: Deps) {
           outcome: 'success',
         })
       )
-      return detailPage(req, await listDocuments(deps.db, req.id), user!)
+      return detailPage(req, await listDocuments(deps.db, req.id), user!, ctx.now)
     })
     .post('/requests/:id/reissue', async ({ user, params, request, server }) => {
       const found = await forRequest(

@@ -1,6 +1,6 @@
 import { beforeEach, expect, test } from 'bun:test'
 import { asc, eq } from 'drizzle-orm'
-import { auditEvents, requests, uploadLinks } from '../src/db/schema'
+import { auditEvents, documents, requests, uploadLinks } from '../src/db/schema'
 import { SEED } from '../src/db/seed'
 import { sha256Hex } from '../src/modules/access/crypto'
 import {
@@ -13,6 +13,7 @@ import {
   resetDb,
   signIn,
   testApp,
+  uploadedRequestVia,
 } from './helpers'
 
 beforeEach(resetDb)
@@ -349,4 +350,74 @@ test('a locked link is flagged on the list and the detail page', async () => {
   expect(await (await get(app, '/', { cookie })).text()).toContain('Link locked')
   const detail = await (await get(app, `/requests/${requestId}`, { cookie })).text()
   expect(detail).toContain('Link locked: reissue required')
+})
+
+const detailHtml = async (app: App, requestId: string, userId: string) =>
+  (
+    await get(app, `/requests/${requestId}`, { cookie: await signIn(app, userId) })
+  ).text()
+
+test('document names link to the download only when allowed and clean', async () => {
+  const { app } = testApp()
+  const { requestId, documentIds } = await uploadedRequestVia(app)
+  const id = documentIds[0]!
+  const href = `href="/documents/${id}"`
+  expect(await detailHtml(app, requestId, SEED.users.alice)).toContain(href)
+  expect(await detailHtml(app, requestId, SEED.users.carol)).toContain(href)
+
+  await appDb
+    .update(documents)
+    .set({ scanStatus: 'pending' })
+    .where(eq(documents.id, id))
+  for (const user of [SEED.users.alice, SEED.users.carol]) {
+    const html = await detailHtml(app, requestId, user)
+    expect(html).not.toContain(href)
+    expect(html).toContain('<td>pending</td>')
+    expect(html).toContain('payslip.pdf')
+  }
+})
+
+test("compliance sees the audit trail link; bankers don't", async () => {
+  const { app } = testApp()
+  const { requestId } = await createRequestVia(app)
+  const href = `href="/requests/${requestId}/audit"`
+  expect(await detailHtml(app, requestId, SEED.users.carol)).toContain(href)
+  expect(await detailHtml(app, requestId, SEED.users.alice)).not.toContain(href)
+})
+
+test('link state wording matches the link', async () => {
+  let now = new Date('2026-11-07T00:00:00Z')
+  const { app } = testApp({ now: () => now })
+  const fresh = await createRequestVia(app)
+  const expiresAt = new Date(now.getTime() + 72 * 3600_000)
+  const linkLine = async (requestId: string) =>
+    (
+      await bodyText(
+        await get(app, `/requests/${requestId}`, {
+          cookie: await signIn(app, SEED.users.alice),
+        })
+      )
+    ).match(/Link: [^<]*/)?.[0]
+
+  expect(await linkLine(fresh.requestId)).toBe(
+    `Link: active until ${expiresAt.toISOString()}`
+  )
+
+  const locked = await createRequestVia(app)
+  await appDb
+    .update(uploadLinks)
+    .set({ state: 'locked' })
+    .where(eq(uploadLinks.requestId, locked.requestId))
+  expect(await linkLine(locked.requestId)).toBe('Link: locked')
+
+  const used = await uploadedRequestVia(app)
+  expect(await linkLine(used.requestId)).toBe('Link: used')
+
+  const revoked = await createRequestVia(app)
+  await reissue(app, revoked.requestId, revoked.cookie)
+  // The reissued link is the current one, so the line shows it, not the revoked one.
+  expect(await linkLine(revoked.requestId)).toStartWith('Link: active until')
+
+  now = expiresAt
+  expect(await linkLine(fresh.requestId)).toBe('Link: expired')
 })
