@@ -2,6 +2,7 @@ import { Elysia } from "elysia";
 import type { Deps } from "./deps";
 import { maskTokens, originAllowed, SECURITY_HEADERS } from "./web/http";
 import { STYLESHEET } from "./web/render";
+import { loginRoutes } from "./web/routes/login";
 
 export function createApp(deps: Deps) {
   const started = new WeakMap<Request, number>();
@@ -22,7 +23,8 @@ export function createApp(deps: Deps) {
     .get("/styles.css", ({ set }) => {
       set.headers["content-type"] = "text/css; charset=utf-8";
       return STYLESHEET;
-    });
+    })
+    .use(loginRoutes(deps));
 }
 
 export type App = ReturnType<typeof createApp>;
