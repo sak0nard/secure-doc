@@ -35,7 +35,15 @@ export type AcceptedFile = IncomingFile & {
   documentType: DocumentType
   detectedType: DetectedType
 }
-export type Problem = { field?: string; reason: string }
+/**
+ * Why a submission was refused. `reason` never contains the file name, so it is safe to
+ * audit; `file` is the customer's name for the file, for display only.
+ */
+export type Problem = { field?: string; file?: string; reason: string }
+
+/** A problem as the customer reads it, e.g. "payslip.pdf: larger than 10 MB". */
+export const problemText = (p: Problem) =>
+  p.file ? `${p.file}: ${p.reason}` : p.reason
 
 const isDocumentType = (v: string): v is DocumentType =>
   (DOCUMENT_TYPES as readonly string[]).includes(v)
@@ -57,12 +65,20 @@ export function checkSubmission(
     const documentType =
       isDocumentType(f.field) && requested.includes(f.field) ? f.field : null
     if (!documentType)
-      problems.push({ field: f.field, reason: `${f.name}: not a requested document` })
+      problems.push({
+        field: f.field,
+        file: f.name,
+        reason: 'not a requested document',
+      })
     const detectedType = detectType(f.bytes)
     if (!detectedType)
-      problems.push({ field: f.field, reason: `${f.name}: not a PDF, JPG or PNG file` })
+      problems.push({
+        field: f.field,
+        file: f.name,
+        reason: 'not a PDF, JPG or PNG file',
+      })
     if (f.bytes.length > MAX_FILE_BYTES)
-      problems.push({ field: f.field, reason: `${f.name}: larger than 10 MB` })
+      problems.push({ field: f.field, file: f.name, reason: 'larger than 10 MB' })
     if (problems.length === before && documentType && detectedType)
       accepted.push({ ...f, documentType, detectedType })
   }

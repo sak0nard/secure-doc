@@ -1,4 +1,4 @@
-import { and, eq, gt, isNull } from 'drizzle-orm'
+import { and, eq, gt, isNull, type SQL } from 'drizzle-orm'
 import type { Db, Tx } from '../../db/client'
 import { customerSessions, uploadLinks } from '../../db/schema'
 import { randomToken, sha256Hex } from '../access/crypto'
@@ -24,6 +24,27 @@ export async function createCustomerSession(
   return { token }
 }
 
+/** Sessions matching `match` that are still usable: see `resolveCustomerSession`. */
+function usableSessions(db: Db | Tx, match: SQL, now: Date) {
+  return db
+    .select({
+      sessionId: customerSessions.id,
+      linkId: customerSessions.linkId,
+      requestId: uploadLinks.requestId,
+    })
+    .from(customerSessions)
+    .innerJoin(uploadLinks, eq(uploadLinks.id, customerSessions.linkId))
+    .where(
+      and(
+        match,
+        isNull(customerSessions.endedAt),
+        gt(customerSessions.expiresAt, now),
+        eq(uploadLinks.state, 'active'),
+        gt(uploadLinks.expiresAt, now)
+      )
+    )
+}
+
 /**
  * The session for a cookie value, or null. A session is valid while it is unended and
  * unexpired and its link is still active and unexpired, so a reissue, lock or submit
@@ -35,24 +56,35 @@ export async function resolveCustomerSession(
   now: Date
 ): Promise<CustomerSession | null> {
   if (!token) return null
-  const [row] = await db
-    .select({
-      sessionId: customerSessions.id,
-      linkId: customerSessions.linkId,
-      requestId: uploadLinks.requestId,
-    })
-    .from(customerSessions)
-    .innerJoin(uploadLinks, eq(uploadLinks.id, customerSessions.linkId))
-    .where(
-      and(
-        eq(customerSessions.tokenHash, sha256Hex(token)),
-        isNull(customerSessions.endedAt),
-        gt(customerSessions.expiresAt, now),
-        eq(uploadLinks.state, 'active'),
-        gt(uploadLinks.expiresAt, now)
-      )
-    )
+  const [row] = await usableSessions(
+    db,
+    eq(customerSessions.tokenHash, sha256Hex(token)),
+    now
+  )
   return row ?? null
+}
+
+/**
+ * Takes the session's link row lock, then says whether the session is still usable. The
+ * answer holds until the transaction ends, so a reissue or another submit cannot slip in
+ * between. Call it before any audit write in the transaction.
+ */
+export async function lockCustomerSession(
+  tx: Tx,
+  session: CustomerSession,
+  now: Date
+): Promise<boolean> {
+  await tx
+    .select({ id: uploadLinks.id })
+    .from(uploadLinks)
+    .where(eq(uploadLinks.id, session.linkId))
+    .for('update')
+  const [row] = await usableSessions(
+    tx,
+    eq(customerSessions.id, session.sessionId),
+    now
+  )
+  return row !== undefined
 }
 
 /** Ends a session (e.g. on submit). Ending an already-ended session changes nothing. */

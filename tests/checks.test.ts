@@ -4,6 +4,7 @@ import {
   detectType,
   type IncomingFile,
   MAX_FILE_BYTES,
+  problemText,
 } from '../src/modules/documents/checks'
 import { elf, exe, jpeg, pdf, png, sized } from './fixtures'
 
@@ -13,7 +14,7 @@ const file = (field: string, name: string, bytes: Uint8Array): IncomingFile => (
   bytes,
 })
 const reasons = (r: ReturnType<typeof checkSubmission>) =>
-  r.ok ? [] : r.problems.map((p) => p.reason)
+  r.ok ? [] : r.problems.map(problemText)
 
 describe('upload checks', () => {
   test('types are recognised by content', () => {

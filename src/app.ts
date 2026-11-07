@@ -1,5 +1,6 @@
 import { Elysia } from 'elysia'
 import type { Deps } from './deps'
+import { MAX_FILE_BYTES, MAX_FILES } from './modules/documents/checks'
 import { maskTokens, originAllowed, SECURITY_HEADERS } from './web/http'
 import { STYLESHEET } from './web/render'
 import { customerRoutes } from './web/routes/customer'
@@ -10,7 +11,10 @@ import { requestRoutes } from './web/routes/requests'
 export function createApp(deps: Deps) {
   const started = new WeakMap<Request, number>()
 
-  return new Elysia()
+  // Room for a full submission (10 files of 10 MB) plus multipart overhead.
+  const maxRequestBodySize = MAX_FILES * MAX_FILE_BYTES + 1024 * 1024
+
+  return new Elysia({ serve: { maxRequestBodySize } })
     .onRequest(({ request, set }) => {
       started.set(request, performance.now())
       Object.assign(set.headers, SECURITY_HEADERS)

@@ -4,6 +4,8 @@ import type { Tx } from '../../db/client'
 import type { Deps } from '../../deps'
 import { sha256Hex } from '../../modules/access/crypto'
 import { type ActionContext, appendAudit } from '../../modules/audit/audit'
+import { type IncomingFile, problemText } from '../../modules/documents/checks'
+import { submitUpload } from '../../modules/documents/uploads'
 import { linkForCustomer, sendCode, verifyCode } from '../../modules/otp/codes'
 import {
   CUSTOMER_COOKIE,
@@ -11,13 +13,14 @@ import {
   createCustomerSession,
   resolveCustomerSession,
 } from '../../modules/otp/sessions'
+import type { DocumentType } from '../../modules/requests/requests'
 import {
   REFUSED_LINK_TEXT,
   resolveLink,
   tokenHashPrefix,
 } from '../../modules/requests/links'
 import { sourceIp } from '../http'
-import { Layout, page, types } from '../render'
+import { DOCUMENT_LABELS, Layout, page, types } from '../render'
 import { readCookie } from '../session'
 
 const SEND_REFUSED_TEXT = {
@@ -28,6 +31,9 @@ const WRONG_CODE_TEXT =
   "That code didn't work. Check it and try again, or request a new code."
 const LOCKED_TEXT =
   'Too many incorrect codes. This link is now locked; contact your banker.'
+const THANKS_TEXT = 'Thank you. Your documents have been sent to your banker.'
+const UNAVAILABLE_TEXT = "We couldn't process your files right now. Please try again."
+const ACCEPT = '.pdf,.jpg,.jpeg,.png,application/pdf,image/jpeg,image/png'
 const SESSION_ENDED_TEXT =
   'Your upload session has ended. Open the link from your banker again.'
 
@@ -91,6 +97,57 @@ function codePage(token: string, notice: string, status = 200) {
       <CodeForm token={token} />
       <p>Didn't get it?</p>
       <SendCodeForm token={token} label="Send a new code" />
+    </Layout>,
+    { status }
+  )
+}
+
+/**
+ * The files in a multipart upload, each tagged with the input it came through. An input
+ * left empty arrives as an unnamed, empty part and is skipped. Null if the body is not a
+ * form at all.
+ */
+async function postedFiles(request: Request): Promise<IncomingFile[] | null> {
+  const form = await request.formData().catch(() => null)
+  if (!form) return null
+  const files: IncomingFile[] = []
+  for (const [field, value] of form.entries()) {
+    if (typeof value === 'string') continue
+    // Bun reads `filename=""` as a part with no name at all.
+    if (!value.name && value.size === 0) continue
+    files.push({
+      field,
+      name: value.name || 'Unnamed file',
+      bytes: new Uint8Array(await value.arrayBuffer()),
+    })
+  }
+  return files
+}
+
+/** The upload form: one file input per requested type, so each file carries its type. */
+function uploadPage(requested: DocumentType[], problems: string[] = [], status = 200) {
+  return page(
+    <Layout title="Upload your documents">
+      <h1>Upload your documents</h1>
+      {problems.length > 0 && (
+        <>
+          <p>We couldn't accept these files. Nothing was sent:</p>
+          <ul>
+            {problems.map((p, i) => (
+              <li key={i}>{p}</li>
+            ))}
+          </ul>
+        </>
+      )}
+      <form method="post" action="/u/upload" encType="multipart/form-data">
+        {requested.map((t) => (
+          <label key={t}>
+            {DOCUMENT_LABELS[t]} <input type="file" name={t} multiple accept={ACCEPT} />
+          </label>
+        ))}
+        <p>PDF, JPG or PNG, up to 10 MB each.</p>
+        <button type="submit">Send documents</button>
+      </form>
     </Layout>,
     { status }
   )
@@ -191,11 +248,37 @@ export function customerRoutes(deps: Deps) {
     .get('/u/upload', async ({ request }) => {
       const session = await customerSession(request)
       if (!session) return sessionEndedPage()
-      // Placeholder until the upload flow replaces this page.
-      return page(
-        <Layout title="Upload your documents">
-          <h1>Upload your documents</h1>
-        </Layout>
-      )
+      const { documentTypes } = await linkForCustomer(deps.db, session.linkId)
+      return uploadPage(documentTypes)
     })
+    .post(
+      '/u/upload',
+      async ({ request, server }) => {
+        const session = await customerSession(request)
+        if (!session) return sessionEndedPage()
+        const files = await postedFiles(request)
+        if (!files)
+          return message('Bad request', 'Please choose your files again.', 400)
+        const ctx: ActionContext = {
+          actor: { type: 'customer', id: session.linkId },
+          ip: sourceIp(request, server, deps.config.trustProxy),
+          now: deps.now(),
+        }
+        const outcome = await submitUpload(deps, ctx, session, files)
+        switch (outcome.result) {
+          case 'submitted':
+            return message('Documents sent', THANKS_TEXT, 200)
+          case 'session_ended':
+            return sessionEndedPage()
+          case 'unavailable':
+            return message('Please try again', UNAVAILABLE_TEXT, 503)
+          case 'rejected': {
+            const { documentTypes } = await linkForCustomer(deps.db, session.linkId)
+            return uploadPage(documentTypes, outcome.problems.map(problemText), 422)
+          }
+        }
+      },
+      // The files are read straight from the multipart body, every part of it.
+      { parse: 'none' }
+    )
 }

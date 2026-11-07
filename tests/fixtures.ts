@@ -16,7 +16,7 @@ export const exe = () => bytes('MZ', [0x90, 0x00, 0x03, 0x00, 0x00, 0x00])
 export const elf = () => bytes([0x7f, 0x45, 0x4c, 0x46, 0x02, 0x01, 0x01, 0x00])
 
 /** `prefix` padded with zeros to exactly `total` bytes. */
-export function sized(prefix: Uint8Array, total: number): Uint8Array {
+export function sized(prefix: Uint8Array, total: number): Uint8Array<ArrayBuffer> {
   const out = new Uint8Array(total)
   out.set(prefix.subarray(0, total))
   return out
