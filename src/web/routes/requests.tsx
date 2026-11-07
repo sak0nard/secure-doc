@@ -4,6 +4,7 @@ import type { Deps } from '../../deps'
 import { type Action, authorise } from '../../modules/access/policy'
 import type { User } from '../../modules/access/sessions'
 import { type ActionContext, auditAction } from '../../modules/audit/audit'
+import { type DocumentSummary, listDocuments } from '../../modules/documents/documents'
 import {
   CHANGE_ALLOWED_FROM,
   closeRequest,
@@ -89,7 +90,42 @@ const notFound = () => message('Not found', 'There is no such request.', 404)
 const conflict = () =>
   message('Not changed', "This request can't be changed in its current state.", 409)
 
-function detailPage(r: RequestDetail, user: User) {
+const size = (bytes: number) =>
+  bytes < 1024 * 1024
+    ? `${Math.max(1, Math.round(bytes / 1024))} KB`
+    : `${(bytes / (1024 * 1024)).toFixed(1)} MB`
+
+function DocumentList({ docs }: { docs: DocumentSummary[] }) {
+  if (docs.length === 0) return <p>None yet.</p>
+  return (
+    <table>
+      <thead>
+        <tr>
+          <th>Type</th>
+          <th>File</th>
+          <th>Format</th>
+          <th>Size</th>
+          <th>Uploaded</th>
+          <th>Scan</th>
+        </tr>
+      </thead>
+      <tbody>
+        {docs.map((d) => (
+          <tr key={d.id}>
+            <td>{DOCUMENT_LABELS[d.documentType]}</td>
+            <td>{d.originalFilename}</td>
+            <td>{d.detectedType.toUpperCase()}</td>
+            <td>{size(d.sizeBytes)}</td>
+            <td>{when(d.uploadedAt)}</td>
+            <td>{d.scanStatus}</td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  )
+}
+
+function detailPage(r: RequestDetail, docs: DocumentSummary[], user: User) {
   const canReissue =
     authorise(user, 'request.reissue', r) && r.stored === CHANGE_ALLOWED_FROM.reissue
   const canClose =
@@ -130,7 +166,7 @@ function detailPage(r: RequestDetail, user: User) {
         </form>
       )}
       <h2>Documents</h2>
-      <p>None yet.</p>
+      <DocumentList docs={docs} />
     </Layout>
   )
 }
@@ -282,7 +318,7 @@ export function requestRoutes(deps: Deps) {
           outcome: 'success',
         })
       )
-      return detailPage(req, user!)
+      return detailPage(req, await listDocuments(deps.db, req.id), user!)
     })
     .post('/requests/:id/reissue', async ({ user, params, request, server }) => {
       const found = await forRequest(

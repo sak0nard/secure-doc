@@ -3,7 +3,7 @@
 ## How to run the checks
 
 ```bash
-bun run services     # Postgres and RustFS in Docker
+bun run services     # Postgres and RustFS in Docker, plus the storage buckets
 bun test             # migrates the test database, then runs every test
 bun run typecheck
 ```
@@ -14,8 +14,9 @@ The tests run against real Postgres and RustFS in Docker, not in-memory fakes. T
 
 | Check               | Result                                       |
 | ------------------- | -------------------------------------------- |
-| `bun test`          | 127 pass, 0 fail (11 files, 1389 assertions) |
+| `bun test`          | 156 pass, 0 fail (14 files, 1502 assertions) |
 | `bun run typecheck` | No type errors                               |
+| `bun fmt --check`   | All files formatted                          |
 
 ## What the tests prove so far
 
@@ -124,15 +125,36 @@ The tests run against real Postgres and RustFS in Docker, not in-memory fakes. T
 - Reissuing the link ends an upload session started on the old link.
 - After a lockout and a reissue, the new link can send and verify a code.
 
+**Uploads** (`tests/storage.test.ts`, `tests/checks.test.ts`, `tests/uploads.test.ts`)
+
+- Storage (real RustFS, test bucket): stored bytes come back unchanged; a missing object reads as null; a deleted object is gone, and deleting it again is not an error. The mock scanner passes everything.
+- Types are recognised from content only: PDF, PNG and JPEG fixtures are recognised; Windows (`MZ`) and Linux (ELF) executables, an empty file and a 2-byte `%P` are not.
+- An executable named `payslip.pdf` is rejected (AC-3, unit). A PDF of 10 MB + 1 byte is rejected; exactly 10 MB is accepted (AC-4, unit).
+- Every requested type needs a file (`Missing: Photo ID`); a file under an unrequested or unknown type is rejected; 11 files are rejected; all problems are reported together; accepted files carry their document type and detected type.
+- The upload page has one `multiple` file input per requested type, the size note and "Send documents".
+- AC-2: after a valid link and the correct code, the customer uploads a PDF payslip and a JPEG photo ID. Two document rows hold the right type, detected type, size, SHA-256, `clean` scan status and a retention date 2555 days ahead; each key is `documents/<uuid>`; the stored object has the same bytes; the request is Received on the banker's list.
+- Submitting uses up the link and ends the session: the upload page and a second submit get 403. AC-5: opening the used link gets the generic refusal, recorded with reason `used`.
+- Uploads are audited: one `document.uploaded` per file (with SHA-256, no file name) and one `request.received`; the chain verifies.
+- AC-3: a renamed executable sent as `application/pdf` gets 422 with `payslip.pdf: not a PDF, JPG or PNG file` and the form again; nothing is written to storage or the database; `upload.rejected` records the problem without the file name; a retry with valid files succeeds.
+- AC-4: a 10 MB + 1 byte file gets 422 with `big.pdf: larger than 10 MB`; nothing stored.
+- Only a payslip for a payslip-and-photo-ID request gets 422 with `Missing: Photo ID`. A file box left empty counts as missing, not as a bad file.
+- A hostile file name (`../../etc/<b>x</b>.pdf`) is accepted as a display name only: the key is random, and the banker's page shows it escaped.
+- An infected result refuses the whole submission (422, `failed the security scan`); nothing is written.
+- A storage failure on the second file answers 503 with the retry text; the first object is deleted, no rows are written, and a retry succeeds.
+- A scanner failure answers 503 (fail closed); nothing is written.
+- A reissue that lands while the files are being stored refuses the submit (403); the written objects are deleted and no rows are written.
+- Two tabs submitting at once on one session: exactly one gets 200 and the other 403; only the winner's documents exist, and the loser's objects are deleted.
+- The banker's request page lists each document's file name, type and scan status.
+
 ## Acceptance criteria
 
 | Acceptance criterion                                                     | Status                                                                                                                                                      |
 | ------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | A banker creates a request and sees the upload link exactly once         | Met: "AC-1: banker creates a request and sees the upload link exactly once"                                                                                 |
-| A valid link plus the correct code lets the customer upload a PDF        | Not yet built                                                                                                                                               |
-| A renamed executable with a .pdf extension is rejected                   | Not yet built                                                                                                                                               |
-| A file over 10 MB is rejected                                            | Not yet built                                                                                                                                               |
-| A used, expired or reissued link is refused                              | Partly met: "AC-5: a reissued (revoked) link is refused", "AC-5: an expired link is refused". The used case comes with uploads                              |
+| A valid link plus the correct code lets the customer upload a PDF        | Met: "AC-2: a valid link plus the correct code lets the customer upload a PDF"                                                                              |
+| A renamed executable with a .pdf extension is rejected                   | Met: "AC-3: a renamed executable is rejected and nothing is stored"                                                                                         |
+| A file over 10 MB is rejected                                            | Met: "AC-4: a file over 10 MB is rejected"                                                                                                                  |
+| A used, expired or reissued link is refused                              | Met: "AC-5: a used link is refused", "AC-5: a reissued (revoked) link is refused", "AC-5: an expired link is refused"                                       |
 | Five wrong codes lock the link and log a suspicious-activity event       | Met: "AC-6: five wrong codes lock the link and log a suspicious-activity event"                                                                             |
 | Another banker gets access denied, and the attempt is logged             | Partly met for request pages: "another banker is denied the detail page, and the attempt is logged". Documents come later                                   |
 | Compliance can view the document and the full audit trail                | Not yet built                                                                                                                                               |
@@ -146,6 +168,8 @@ Each criterion will get its own named test.
 - **Future tables aren't automatically granted** to the app role; every table exists today, but a later table would need its own grant.
 - **Log timing:** request log lines are written just after the response is sent, so two tests wait 5 ms before checking. This could be flaky on a heavily loaded machine.
 - **Request list scale:** the list reads every request and keeps the ones the policy allows, so the policy stays the only access decision. At production volumes it needs a database filter derived from the same policy, and paging.
+- **Orphan objects:** objects are written before the database transaction commits. A crash between the write and the commit (or a failed best-effort delete) leaves an object with no `documents` row. It is unreachable, because every read goes through a row; in production the purge job would sweep keys with no row.
+- **Body size limit is configuration only:** the 101 MB request-body cap is set on the server, but the tests drive the app without a server, so it is not exercised.
 - **Not tested:** load, availability, accessibility (WCAG 2.1 AA), and behaviour behind a real TLS proxy.
 
 ## Accepted risks

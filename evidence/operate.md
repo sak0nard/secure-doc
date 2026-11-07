@@ -7,7 +7,7 @@ Requires Bun 1.4+ and Docker.
 ```bash
 bun install
 cp .env.example .env
-bun run services      # docker compose up -d --wait
+bun run services      # Postgres and RustFS (waits until ready), then creates the buckets
 bun run db:migrate    # applies src/db/migrations as the owner role; safe to re-run
 bun run db:seed       # synthetic users and customers; safe to re-run
 bun run dev           # http://localhost:3000, restarts on change
@@ -21,6 +21,12 @@ bun run dev           # http://localhost:3000, restarts on change
 | RustFS console  | `http://localhost:9001` | Browse stored objects                                                                                          |
 
 To start from empty, run `docker compose down -v`, then repeat the steps above.
+
+## Storage
+
+- **Buckets:** `secure-doc` (the app) and `secure-doc-test` (the tests). The compose job `createbuckets` creates both with the AWS CLI and exits; it skips a bucket that already exists, so it is safe to re-run with `docker compose run --rm createbuckets`. The app never creates buckets (Bun's S3 client cannot), so a missing bucket shows up as a failed upload.
+- **Browsing objects:** the RustFS console at `http://localhost:9001`, signed in with `S3_ACCESS_KEY_ID` and `S3_SECRET_ACCESS_KEY`. Objects are named `documents/<random UUID>`; the `documents` table maps each key to its request, type and original file name.
+- **Production:** an S3 bucket per environment in ap-southeast-2, with SSE-KMS, public access blocked, and access only from the app's role. The bucket is created by infrastructure code, not by the app.
 
 ## Configuration
 
@@ -93,15 +99,15 @@ A trigger also rejects any `UPDATE` or `DELETE` on `audit_events`, even from the
 
 ## Failure modes
 
-| Failure                                                | What happens                                                                                                                                                 | What to do                                                                   |
-| ------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------- |
-| Invalid or missing configuration                       | The app refuses to start and lists every bad variable                                                                                                        | Fix the environment and restart                                              |
-| Database unreachable                                   | Requests fail with a generic 500 page; the error is logged with details                                                                                      | Restore the database; the app recovers without a restart                     |
-| Object storage unreachable                             | _Designed:_ uploads are refused with a "try again" message and nothing is half-stored. Downloads fail with a generic error                                   | Restore storage; customers retry within their session or the banker reissues |
-| SMS provider down                                      | _Designed:_ the code send fails and the customer is asked to try again. The attempt still counts toward the resend limit only if a message was actually sent | Restore the provider                                                         |
-| Malware scanner down                                   | _Designed:_ fail closed. Files stay pending and cannot be viewed until scanned                                                                               | Restore the scanner, then rescan pending files                               |
-| Crash between storing a file and committing its record | An orphan object with no database row. It can't be reached, because every read goes through a database row                                                   | A periodic sweep removes objects with no row (production)                    |
-| Audit chain broken                                     | The compliance audit page reports the first broken event                                                                                                     | Treat as a security incident; compare with the anchored hash                 |
+| Failure                                                | What happens                                                                                                                                                                                                                         | What to do                                                                   |
+| ------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------- |
+| Invalid or missing configuration                       | The app refuses to start and lists every bad variable                                                                                                                                                                                | Fix the environment and restart                                              |
+| Database unreachable                                   | Requests fail with a generic 500 page; the error is logged with details                                                                                                                                                              | Restore the database; the app recovers without a restart                     |
+| Object storage unreachable                             | An upload answers 503 "We couldn't process your files right now. Please try again." Objects already written are deleted, no rows are written, and the customer's session stays open. _Designed:_ downloads fail with a generic error | Restore storage; customers retry within their session or the banker reissues |
+| SMS provider down                                      | _Designed:_ the code send fails and the customer is asked to try again. The attempt still counts toward the resend limit only if a message was actually sent                                                                         | Restore the provider                                                         |
+| Malware scanner down                                   | Fail closed: an upload answers 503 with the same retry message; nothing is stored and the session stays open. (Production, with asynchronous scanning: files stay pending and cannot be viewed until scanned)                        | Restore the scanner, then rescan pending files                               |
+| Crash between storing a file and committing its record | An orphan object with no database row. It can't be reached, because every read goes through a database row                                                                                                                           | A periodic sweep removes objects with no row (production)                    |
+| Audit chain broken                                     | The compliance audit page reports the first broken event                                                                                                                                                                             | Treat as a security incident; compare with the anchored hash                 |
 
 ## Rollback and degrade
 

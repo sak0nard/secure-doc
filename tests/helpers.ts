@@ -6,12 +6,16 @@ import { SEED, seed } from '../src/db/seed'
 import { createApp } from '../src/app'
 import type { Deps } from '../src/deps'
 import { sha256Hex } from '../src/modules/access/crypto'
+import { alwaysClean } from '../src/ports/scanner'
 import { outboxSms } from '../src/ports/sms'
+import { s3Store } from '../src/ports/storage'
 import type { DocumentType } from '../src/modules/requests/requests'
 
 export const config = loadConfig(process.env)
 export const ownerDb = createDb(config.databaseOwnerUrl)
 export const appDb = createDb(config.databaseUrl)
+/** The real object store against the test bucket. */
+export const testStore = s3Store(config.s3)
 
 /** Empty every table (as owner, so audit rows can go too) and re-seed. */
 export async function resetDb(): Promise<void> {
@@ -49,6 +53,8 @@ export function testApp(overrides: Partial<Deps> = {}) {
     config,
     db: appDb,
     sms: outboxSms,
+    storage: testStore,
+    scanner: alwaysClean,
     now: () => new Date(),
     log: (l) => logs.push(l),
     ...overrides,

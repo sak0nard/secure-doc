@@ -12,7 +12,7 @@ Requires Bun 1.4+ and Docker.
 ```bash
 bun install
 cp .env.example .env
-bun run services      # Postgres 18 (host port 5433) and RustFS (9000, console 9001)
+bun run services      # Postgres 18 (host port 5433), RustFS (9000, console 9001), buckets
 bun run db:migrate
 bun run db:seed
 bun run dev           # http://localhost:3000

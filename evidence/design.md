@@ -85,7 +85,7 @@ Customer (phone) ─────┘    (server-rendered     ├── Object sto
   - scanning: mock → real scanner
   - identity: mock sign-in → OIDC
 
-**Status:** configuration, the data model, the database protections, HTTP hardening, sign-in, the audit chain, the authorisation policy, and requests with their upload links (create, list, detail, reissue, close, and the refusal of unusable links), and one-time codes with the customer upload session are built. The rest of this document describes the agreed design for what comes next.
+**Status:** configuration, the data model, the database protections, HTTP hardening, sign-in, the audit chain, the authorisation policy, and requests with their upload links (create, list, detail, reissue, close, and the refusal of unusable links), one-time codes with the customer upload session, and customer uploads (checks, scan step, storage, submit) are built. The rest of this document describes the agreed design for what comes next.
 
 ## Data flow
 
@@ -104,7 +104,7 @@ Customer (phone) ─────┘    (server-rendered     ├── Object sto
 4. **Verify.** The customer enters the code.
    - A correct code starts a 15-minute upload session (an `HttpOnly` cookie limited to `/u`). The link token no longer appears in URLs after this point.
    - Wrong codes count against the link. The fifth locks it and records a suspicious-activity event.
-5. **Upload.** The customer picks files and tags each with one of the requested document types, then submits.
+5. **Upload.** The customer chooses files under each requested document type (one file box per type), then submits.
    - The server checks each file's real type from its first bytes (PDF, JPEG or PNG), its size (10 MB at most), and that every requested type is present.
    - Any failure rejects the whole submission with reasons, and the customer can retry.
    - On success, each file is hashed, passed through the scan step and stored under a random key. Its metadata, including the retention date, is recorded.
@@ -116,20 +116,20 @@ Customer (phone) ─────┘    (server-rendered     ├── Object sto
 
 ## Security and privacy
 
-| Threat                                           | Control                                                                                                                                                             | Status                                                                  |
-| ------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------- |
-| Database leak exposes live links or sessions     | Tokens stored only as SHA-256; codes as keyed HMAC-SHA-256                                                                                                          | Built                                                                   |
-| Stolen or forwarded link                         | The code is sent to the mobile on file, never the channel that carried the link. Links are single-use, expire in 72 hours, and are revoked on reissue               | Built: the code, expiry and revocation on reissue. Designed: single use |
-| Guessing tokens or codes                         | 256-bit tokens; a link locks after 5 wrong codes; at most 3 codes per link, 30 seconds apart                                                                        | Built                                                                   |
-| Token leaking through the Referer header or logs | `Referrer-Policy: no-referrer` on every response; tokens masked in request logs                                                                                     | Built                                                                   |
-| Cross-site request forgery                       | `SameSite=Strict` cookies, plus an `Origin` check on every state-changing request                                                                                   | Built                                                                   |
-| Cross-site scripting                             | React escapes all output; the content security policy allows no inline scripts and no framing                                                                       | Built                                                                   |
-| Internal details leaking in errors               | Generic error pages; details only in the server log                                                                                                                 | Built                                                                   |
-| Spoofed client IP in the audit log               | `X-Forwarded-For` is used only when the proxy is trusted, and only the entry the proxy added                                                                        | Built                                                                   |
-| Malicious upload                                 | Type checked from file contents, not the name; 10 MB limit; scan step; random storage keys; files always served as downloads, never rendered on the portal's domain | Designed                                                                |
-| Insider browsing documents                       | One authorisation policy: the requesting banker and compliance only. Every view and every refusal audited                                                           | Built for requests; designed for documents                              |
-| Audit tampering                                  | SHA-256 hash chain over every event field (canonical JSON), plus database permissions and a trigger that block edits and deletes                                    | Built                                                                   |
-| Keeping data too long                            | Retention date recorded on every file (purge job out of scope)                                                                                                      | Designed                                                                |
+| Threat                                           | Control                                                                                                                                                             | Status                                     |
+| ------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------ |
+| Database leak exposes live links or sessions     | Tokens stored only as SHA-256; codes as keyed HMAC-SHA-256                                                                                                          | Built                                      |
+| Stolen or forwarded link                         | The code is sent to the mobile on file, never the channel that carried the link. Links are single-use, expire in 72 hours, and are revoked on reissue               | Built                                      |
+| Guessing tokens or codes                         | 256-bit tokens; a link locks after 5 wrong codes; at most 3 codes per link, 30 seconds apart                                                                        | Built                                      |
+| Token leaking through the Referer header or logs | `Referrer-Policy: no-referrer` on every response; tokens masked in request logs                                                                                     | Built                                      |
+| Cross-site request forgery                       | `SameSite=Strict` cookies, plus an `Origin` check on every state-changing request                                                                                   | Built                                      |
+| Cross-site scripting                             | React escapes all output; the content security policy allows no inline scripts and no framing                                                                       | Built                                      |
+| Internal details leaking in errors               | Generic error pages; details only in the server log                                                                                                                 | Built                                      |
+| Spoofed client IP in the audit log               | `X-Forwarded-For` is used only when the proxy is trusted, and only the entry the proxy added                                                                        | Built                                      |
+| Malicious upload                                 | Type checked from file contents, not the name; 10 MB limit; scan step; random storage keys; files always served as downloads, never rendered on the portal's domain | Built, except downloads (designed)         |
+| Insider browsing documents                       | One authorisation policy: the requesting banker and compliance only. Every view and every refusal audited                                                           | Built for requests; designed for documents |
+| Audit tampering                                  | SHA-256 hash chain over every event field (canonical JSON), plus database permissions and a trigger that block edits and deletes                                    | Built                                      |
+| Keeping data too long                            | Retention date recorded on every file (purge job out of scope)                                                                                                      | Built                                      |
 
 **Privacy:**
 
@@ -150,6 +150,23 @@ Customer (phone) ─────┘    (server-rendered     ├── Object sto
 
 Customer events (`otp.sent`, `otp.send_refused`, `otp.verified`, `otp.verify_failed`, `otp.locked`) have the link as actor (`customer`) and target, and carry the request id. Their details hold counts and reasons only, never a code.
 
+## Uploads
+
+- **One file box per document type:** the upload form has one `multiple` file input for each requested type, named after the type. The box a file arrives through is its type, so every file is tagged without any client-side script (the content security policy allows none). An empty box counts as that type missing.
+- **All or nothing:** the checks are a pure function over the whole submission and report every problem at once:
+  - type from the first bytes only (PDF `%PDF-`, PNG `89 50 4E 47 0D 0A 1A 0A`, JPEG `FF D8 FF`); the name and the browser's content type are ignored, so an empty or 2-byte file is the wrong type;
+  - at most 10 MB per file (exactly 10 MB is accepted);
+  - 1 to 10 files;
+  - every requested type present, and no file under a type that was not requested.
+
+  Any problem refuses the whole submission with status 422 and the reasons listed against each file (`payslip.pdf: not a PDF, JPG or PNG file`, `Missing: Photo ID`). Nothing is stored, the session stays open for a retry, and `upload.rejected` is audited with each problem's type field and reason, never the file name.
+
+- **Order of work:** hash (SHA-256) and scan every file first; an `infected` result refuses the submission (fail closed). Then write each object under `documents/<random UUID>`, with the content type taken from the detected type only (`application/pdf`, `image/png`, `image/jpeg`). Then commit one transaction: the document rows (with hash, scan result and `retention_until` = today + `RETENTION_DAYS`, in UTC), the end of the session, the link set to `used`, the request set to Received, one `document.uploaded` event per file and one `request.received`.
+- **Re-check under the link lock:** the transaction locks the request row, then the link row, then re-reads the session. If the session or link stopped being usable while the files were being stored (the banker reissued, or a second tab submitted first), nothing is written and the customer gets the "session ended" page. Two tabs submitting at once: exactly one succeeds. The lock order (request, link, audit) matches reissue, so the two queue instead of deadlocking.
+- **Cleanup of written objects:** every outcome other than success after objects were written (a refused re-check, a storage failure partway, a database error) deletes them, best effort. A scanner or storage failure answers 503 "We couldn't process your files right now. Please try again." with no rows written and the session still open.
+- **File names:** the customer's file name is stored (up to 255 characters) for display only. It never forms part of a storage key and is escaped on every page.
+- **Body size:** the server accepts request bodies up to 10 × 10 MB plus 1 MB of multipart overhead.
+
 ## Audit chain
 
 - **Hashed fields:** every column except `seq` and `hash`: `at` (ISO-8601), `actorType`, `actorId`, `action`, `targetType`, `targetId`, `requestId`, `sourceIp`, `outcome`, `detail` and `prevHash`. Each event's `hash` is `sha256(prevHash + canonicalJson(fields))`.
@@ -167,6 +184,7 @@ Audited actions so far:
 - Links: `link.issued`, `link.revoked` (on reissue, before the new link's `link.issued`) and `link.refused` (an unusable link was opened; the real reason is recorded here only).
 - Refusals: `access.denied`, with the action that was refused.
 - One-time codes: `otp.sent`, `otp.send_refused`, `otp.verified`, `otp.verify_failed` and `otp.locked` (outcome `suspicious`).
+- Uploads: `document.uploaded` (one per file: type, detected type, size and SHA-256), `request.received`, and `upload.rejected` (outcome `failure`, the problems without file names).
 
 Link events carry the first 8 hex characters of the token's hash for correlation, never the token.
 

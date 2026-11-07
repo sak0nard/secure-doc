@@ -4,7 +4,7 @@
   "type": "module",
   "private": true,
   "scripts": {
-    "services": "docker compose up -d --wait",
+    "services": "docker compose up -d --wait postgres rustfs && docker compose run --rm createbuckets",
     "db:migrate": "bun src/db/migrate.ts",
     "db:seed": "bun src/db/seed.ts",
     "dev": "bun --watch src/server.ts",

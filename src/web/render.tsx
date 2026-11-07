@@ -1,13 +1,8 @@
 import type { ReactElement, ReactNode } from 'react'
 import { renderToString } from 'react-dom/server'
-import type { DocumentType } from '../modules/requests/requests'
+import { DOCUMENT_LABELS, type DocumentType } from '../modules/requests/requests'
 
-export const DOCUMENT_LABELS: Record<DocumentType, string> = {
-  payslip: 'Payslip',
-  bank_statement: 'Bank statement',
-  photo_id: 'Photo ID',
-  other: 'Other',
-}
+export { DOCUMENT_LABELS }
 
 /** Document types as a reader-friendly list: "Payslip, Photo ID". */
 export const types = (t: DocumentType[]) => t.map((d) => DOCUMENT_LABELS[d]).join(', ')
