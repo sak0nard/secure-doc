@@ -1,6 +1,6 @@
 import { sql } from "drizzle-orm";
 import { loadConfig } from "../src/config";
-import { createDb } from "../src/db/client";
+import { createDb, type Tx } from "../src/db/client";
 import { seed } from "../src/db/seed";
 import { createApp } from "../src/app";
 import type { Deps } from "../src/deps";
@@ -17,6 +17,18 @@ export async function resetDb(): Promise<void> {
   const names = [...rows].map((r) => `"${r.tablename}"`).join(", ");
   if (names) await ownerDb.execute(sql.raw(`truncate ${names} restart identity cascade`));
   await seed(ownerDb);
+}
+
+/**
+ * Simulates a privileged attacker: as the owner, with the append-only trigger disabled
+ * for this transaction only. The trigger itself is never loosened.
+ */
+export async function tamperAsOwner(fn: (tx: Tx) => Promise<void>): Promise<void> {
+  await ownerDb.transaction(async (tx) => {
+    await tx.execute(sql`alter table audit_events disable trigger audit_events_append_only`);
+    await fn(tx);
+    await tx.execute(sql`alter table audit_events enable trigger audit_events_append_only`);
+  });
 }
 
 type App = { handle: (req: Request) => Promise<Response> };
