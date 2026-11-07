@@ -1,15 +1,21 @@
 import { beforeEach, expect, test } from "bun:test";
-import { users, userSessions } from "../src/db/schema";
+import { eq } from "drizzle-orm";
+import { auditEvents, users, userSessions } from "../src/db/schema";
 import { sha256Hex } from "../src/modules/access/crypto";
 import { SEED } from "../src/db/seed";
-import { appDb, get, post, resetDb, testApp } from "./helpers";
+import { verifyChain } from "../src/modules/audit/audit";
+import { appDb, config, get, post, resetDb, testApp } from "./helpers";
 
 beforeEach(resetDb);
 
 const cookieValue = (res: Response) => res.headers.get("set-cookie")?.match(/sid=([^;]*)/)?.[1] ?? "";
 
-async function login(app: ReturnType<typeof testApp>["app"], userId: string = SEED.users.alice) {
-  const res = await post(app, "/login", { userId });
+async function login(
+  app: ReturnType<typeof testApp>["app"],
+  userId: string = SEED.users.alice,
+  headers?: Record<string, string>,
+) {
+  const res = await post(app, "/login", { userId }, { headers });
   return { res, cookie: `sid=${cookieValue(res)}` };
 }
 
@@ -99,4 +105,65 @@ test("request log records the real status of a redirect", async () => {
   await post(app, "/login", { userId: SEED.users.alice });
   await Bun.sleep(5); // the log hook runs after the response is sent
   expect(logs.some((l) => l.startsWith("POST /login 303 "))).toBe(true);
+});
+
+const eventsFor = (action: string) => appDb.select().from(auditEvents).where(eq(auditEvents.action, action));
+
+test("sign-in is audited", async () => {
+  const { res } = await login(testApp().app);
+  const events = await eventsFor("user.signed_in");
+  expect(events).toHaveLength(1);
+  expect(events[0]).toMatchObject({
+    actorType: "user",
+    actorId: SEED.users.alice,
+    targetType: "user",
+    targetId: SEED.users.alice,
+    outcome: "success",
+  });
+  expect(JSON.stringify(events[0]!.detail)).not.toContain(decodeURIComponent(cookieValue(res)));
+});
+
+test("failed sign-in is audited without creating a session", async () => {
+  const userId = crypto.randomUUID();
+  await post(testApp().app, "/login", { userId });
+  const events = await eventsFor("user.sign_in_failed");
+  expect(events).toHaveLength(1);
+  expect(events[0]).toMatchObject({ actorType: "user", actorId: "anonymous", targetId: userId, outcome: "failure" });
+  expect(await appDb.select().from(userSessions)).toHaveLength(0);
+});
+
+test("a malformed sign-in id is audited as invalid", async () => {
+  await post(testApp().app, "/login", { userId: "' or 1=1 --" });
+  const events = await eventsFor("user.sign_in_failed");
+  expect(events.map((e) => e.targetId)).toEqual(["invalid"]);
+});
+
+test("sign-out is audited", async () => {
+  const { app } = testApp();
+  const { cookie } = await login(app);
+  await post(app, "/logout", {}, { cookie });
+  const events = await eventsFor("user.signed_out");
+  expect(events).toHaveLength(1);
+  expect(events[0]).toMatchObject({ actorId: SEED.users.alice, targetId: SEED.users.alice, outcome: "success" });
+});
+
+test("sign-out without a session writes no event", async () => {
+  const res = await post(testApp().app, "/logout", {}, { cookie: "sid=not-a-token" });
+  expect(res.headers.get("location")).toBe("/login");
+  expect(await appDb.select().from(auditEvents)).toHaveLength(0);
+});
+
+test("audit records the client IP from a trusted proxy", async () => {
+  const { app } = testApp({ config: { ...config, trustProxy: true } });
+  await login(app, SEED.users.alice, { "x-forwarded-for": "10.9.9.9, 203.0.113.7" });
+  const [event] = await eventsFor("user.signed_in");
+  expect(event!.sourceIp).toBe("203.0.113.7");
+});
+
+test("the chain stays intact across sign-in activity", async () => {
+  const { app } = testApp();
+  const { cookie } = await login(app);
+  await post(app, "/login", { userId: crypto.randomUUID() });
+  await post(app, "/logout", {}, { cookie });
+  expect(await verifyChain(appDb)).toEqual({ ok: true, count: 3 });
 });
