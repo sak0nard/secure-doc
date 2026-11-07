@@ -81,6 +81,8 @@ Verification reports the first broken event and why (edited content, or a broken
 
 **Decision:** a request's stored status is only `open`, `received` or `closed`. "Expired" is shown when a request is open and its latest link has passed its 72-hour expiry. It's computed in one place whenever a request is read.
 
+Reissuing moves an expired request back to a usable Open: it revokes the active link, if any, and issues a new one in one transaction. Reissue first locks the request's row, so two reissues at the same moment run one after the other and can never leave two active links. The database's one-active-link index is the backstop.
+
 **Why:** there's no background job to run, monitor or fail, and the status can't drift from the link's real expiry.
 
 **Cost:** queries that filter on "expired" have to use the same expression rather than a simple column match.

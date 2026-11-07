@@ -12,10 +12,10 @@ The tests run against real Postgres and RustFS in Docker, not in-memory fakes. T
 
 ## Latest results
 
-| Check               | Result                                    |
-| ------------------- | ----------------------------------------- |
-| `bun test`          | 46 pass, 0 fail (5 files, 104 assertions) |
-| `bun run typecheck` | No type errors                            |
+| Check               | Result                                     |
+| ------------------- | ------------------------------------------ |
+| `bun test`          | 101 pass, 0 fail (9 files, 260 assertions) |
+| `bun run typecheck` | No type errors                             |
 
 ## What the tests prove so far
 
@@ -70,17 +70,48 @@ The tests run against real Postgres and RustFS in Docker, not in-memory fakes. T
 - Behind a trusted proxy, the audit event records the client IP the proxy saw.
 - The chain stays intact across sign-in activity.
 
+**Authorisation** (`tests/policy.test.ts`)
+
+- One row per role, action and ownership covers every cell of the policy: a banker may create requests and view, reissue, close and download on their own requests only; compliance may view, close, download and see the audit trail, but may not create or reissue; a banker may not see the audit trail.
+- An action about a request is refused when no request is given.
+
+**Request status** (`tests/status.test.ts`)
+
+- An open request with a usable link shows as Open; once the link reaches its expiry it shows as Expired.
+- A locked link keeps the request Open, flagged as locked.
+- Received and Closed ignore the link.
+- Mobile numbers are masked to the last two digits.
+
+**Requests and links** (`tests/requests.test.ts`, `tests/links.test.ts`)
+
+- A banker creates a request and the link appears on that one response (AC-1). Only the SHA-256 of the token is stored; the token is in no link row, no audit event, the request page or the list.
+- Creating a request writes `request.created` then `link.issued`, by the banker.
+- Selected document types are stored once each. No types, an unknown type, an unknown customer or a malformed customer id is refused with 400 and creates nothing.
+- Compliance cannot create a request: 403, nothing created, and an `access.denied` event.
+- Bankers see only their own requests; compliance sees all. Only bankers get the "New request" link.
+- The owning banker and compliance can open a request; the mobile number is masked, and each view writes `request.viewed`. Another banker gets 403 and an `access.denied` event (AC-7 for request pages).
+- A malformed or unknown request id gets 404, never a 500.
+- Reissue revokes the old link and shows a new one once; the audit order is `link.revoked`, then `link.issued`. Another banker and compliance cannot reissue, and each attempt is logged.
+- Two reissues at the same moment both succeed and leave exactly one active link.
+- An open request whose link has passed its expiry shows as Expired; reissuing makes it Open again.
+- Reissue is refused (409) once a request is received; close is refused (409) unless it is received. Closing writes `request.closed`. Compliance can close; another banker cannot.
+- A locked link is flagged on the list and on the request page.
+- A fresh link opens (AC-5 counterpart). A revoked, expired or locked link gets the generic "no longer valid" page with status 404 (AC-5), and a `link.refused` event records the real reason.
+- An unknown or hostile token (one character, 5,000 characters, `%00`, `..%2F..%2Fetc`, non-ASCII) gets exactly the same page, never a 500.
+- Refusal events hold an 8-character hash prefix, never the token.
+- Link pages, valid or refused, send `Referrer-Policy: no-referrer`.
+
 ## Acceptance criteria
 
 | Acceptance criterion                                                     | Status                                                                                                                                                      |
 | ------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| A banker creates a request and sees the upload link exactly once         | Not yet built                                                                                                                                               |
+| A banker creates a request and sees the upload link exactly once         | Met: "AC-1: banker creates a request and sees the upload link exactly once"                                                                                 |
 | A valid link plus the correct code lets the customer upload a PDF        | Not yet built                                                                                                                                               |
 | A renamed executable with a .pdf extension is rejected                   | Not yet built                                                                                                                                               |
 | A file over 10 MB is rejected                                            | Not yet built                                                                                                                                               |
-| A used, expired or reissued link is refused                              | Not yet built (the one-active-link rule is enforced and tested)                                                                                             |
+| A used, expired or reissued link is refused                              | Partly met: "AC-5: a reissued (revoked) link is refused", "AC-5: an expired link is refused". The used case comes with uploads                              |
 | Five wrong codes lock the link and log a suspicious-activity event       | Not yet built                                                                                                                                               |
-| Another banker gets access denied, and the attempt is logged             | Not yet built                                                                                                                                               |
+| Another banker gets access denied, and the attempt is logged             | Partly met for request pages: "another banker is denied the detail page, and the attempt is logged". Documents come later                                   |
 | Compliance can view the document and the full audit trail                | Not yet built                                                                                                                                               |
 | Editing or deleting an audit event breaks the hash chain and is detected | Met: "AC-9: editing an audit event is detected", "AC-9: editing an event and recomputing its hash is detected", "AC-9: deleting an audit event is detected" |
 
@@ -91,6 +122,7 @@ Each criterion will get its own named test.
 - **Audit tail truncation:** deleting the newest audit events cannot be detected by the hash chain alone. Production fix: periodically anchor the latest hash in write-once storage.
 - **Future tables aren't automatically granted** to the app role; every table exists today, but a later table would need its own grant.
 - **Log timing:** request log lines are written just after the response is sent, so two tests wait 5 ms before checking. This could be flaky on a heavily loaded machine.
+- **Request list scale:** the list reads every request and keeps the ones the policy allows, so the policy stays the only access decision. At production volumes it needs a database filter derived from the same policy, and paging.
 - **Not tested:** load, availability, accessibility (WCAG 2.1 AA), and behaviour behind a real TLS proxy.
 
 ## Accepted risks
