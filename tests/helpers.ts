@@ -42,8 +42,8 @@ export function testApp(overrides: Partial<Deps> = {}) {
 
 const url = (path: string) => new URL(path, config.baseUrl).toString();
 
-export function get(app: App, path: string, opts: { cookie?: string } = {}) {
-  const headers = new Headers();
+export function get(app: App, path: string, opts: { cookie?: string; headers?: Record<string, string> } = {}) {
+  const headers = new Headers(opts.headers);
   if (opts.cookie) headers.set("cookie", opts.cookie);
   return app.handle(new Request(url(path), { headers }));
 }
@@ -53,9 +53,9 @@ export function post(
   app: App,
   path: string,
   form: Record<string, string>,
-  opts: { cookie?: string; origin?: string | null } = {},
+  opts: { cookie?: string; origin?: string | null; headers?: Record<string, string> } = {},
 ) {
-  const headers = new Headers({ "content-type": "application/x-www-form-urlencoded" });
+  const headers = new Headers({ ...opts.headers, "content-type": "application/x-www-form-urlencoded" });
   const origin = opts.origin === undefined ? config.baseUrl.origin : opts.origin;
   if (origin !== null) headers.set("origin", origin);
   if (opts.cookie) headers.set("cookie", opts.cookie);
