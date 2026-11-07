@@ -1,0 +1,91 @@
+# Checks every pull request and every push to main.
+# Mirrors the local setup: Postgres 18 and RustFS as services, the same
+# restricted app role, test database and bucket, and the same commands.
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_USER: secure_doc_owner
+          POSTGRES_PASSWORD: owner_local_only
+          POSTGRES_DB: secure_doc
+        ports:
+          - 5433:5432
+        options: >-
+          --health-cmd "pg_isready -U secure_doc_owner -d secure_doc"
+          --health-interval 2s --health-timeout 3s --health-retries 30
+      rustfs:
+        image: rustfs/rustfs:1.0.3
+        env:
+          RUSTFS_ACCESS_KEY: rustfs_local
+          RUSTFS_SECRET_KEY: rustfs_local_secret
+          RUSTFS_VOLUMES: /data
+          RUSTFS_ADDRESS: ':9000'
+        ports:
+          - 9000:9000
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.4
+
+      - name: Install
+        run: bun install --frozen-lockfile
+
+      - name: Format
+        run: bun fmt --check
+
+      - name: Type check
+        run: bun run typecheck
+
+      - name: Dependency audit (fail on high or critical)
+        run: bun audit --audit-level=high
+
+      # Same script the local container runs on first boot, pointed at the service.
+      - name: Create app role and test database
+        env:
+          POSTGRES_USER: secure_doc_owner
+          POSTGRES_DB: secure_doc
+          APP_DB_PASSWORD: app_local_only
+          PGHOST: localhost
+          PGPORT: '5433'
+          PGPASSWORD: owner_local_only
+        run: sh docker/postgres/init.sh
+
+      - name: Create test bucket
+        env:
+          AWS_ACCESS_KEY_ID: rustfs_local
+          AWS_SECRET_ACCESS_KEY: rustfs_local_secret
+          AWS_DEFAULT_REGION: ap-southeast-2
+        run: |
+          s3="aws --endpoint-url http://localhost:9000"
+          for i in $(seq 30); do $s3 s3 ls > /dev/null 2>&1 && break; sleep 1; done
+          $s3 s3api head-bucket --bucket secure-doc-test 2> /dev/null || $s3 s3 mb s3://secure-doc-test
+
+      # bun test loads .env.test, whose values match the services above.
+      - name: Tests
+        run: bun test
+
+      - name: Migrations match the schema
+        env:
+          DATABASE_OWNER_URL: postgres://secure_doc_owner:owner_local_only@localhost:5433/secure_doc_test
+        run: |
+          bunx drizzle-kit generate
+          git diff --exit-code -- src/db/migrations
+          test -z "$(git status --porcelain -- src/db/migrations)"

@@ -1,6 +1,5 @@
 {
   "name": "secure-doc",
-  "module": "index.ts",
   "type": "module",
   "private": true,
   "scripts": {
@@ -13,7 +12,7 @@
     "typecheck": "bun check"
   },
   "devDependencies": {
-    "@types/bun": "latest",
+    "@types/bun": "1.4.4",
     "@types/react": "19.3.0",
     "@types/react-dom": "19.3.0",
     "drizzle-kit": "0.31.11"
