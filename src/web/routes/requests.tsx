@@ -1,11 +1,16 @@
 import { Elysia } from 'elysia'
 import { z } from 'zod'
 import type { Deps } from '../../deps'
-import { authorise } from '../../modules/access/policy'
+import { type Action, authorise } from '../../modules/access/policy'
 import type { User } from '../../modules/access/sessions'
-import type { ActionContext } from '../../modules/audit/audit'
+import { type ActionContext, auditAction } from '../../modules/audit/audit'
 import {
+  CHANGE_ALLOWED_FROM,
+  closeRequest,
   createRequest,
+  getRequest,
+  reissueLink,
+  type RequestDetail,
   DOCUMENT_TYPES,
   type DocumentType,
   findCustomer,
@@ -76,6 +81,68 @@ function badForm() {
   )
 }
 
+function message(title: string, text: string, status: number) {
+  return page(
+    <Layout title={title}>
+      <p>{text}</p>
+      <p>
+        <a href="/">Back to requests</a>
+      </p>
+    </Layout>,
+    { status }
+  )
+}
+
+const notFound = () => message('Not found', 'There is no such request.', 404)
+const conflict = () =>
+  message('Not changed', "This request can't be changed in its current state.", 409)
+
+function detailPage(r: RequestDetail, user: User) {
+  const canReissue =
+    authorise(user, 'request.reissue', r) && r.stored === CHANGE_ALLOWED_FROM.reissue
+  const canClose =
+    authorise(user, 'request.close', r) && r.stored === CHANGE_ALLOWED_FROM.close
+  return page(
+    <Layout title="Request">
+      <p>
+        <a href="/">All requests</a>
+      </p>
+      <h1>Request for {r.customer.name}</h1>
+      <dl>
+        <dt>Customer</dt>
+        <dd>
+          {r.customer.name} ({r.customer.maskedMobile})
+        </dd>
+        <dt>Documents requested</dt>
+        <dd>{types(r.documentTypes)}</dd>
+        <dt>Created</dt>
+        <dd>{when(r.createdAt)}</dd>
+        <dt>Status</dt>
+        <dd>
+          {r.status.label}
+          {r.status.linkLocked && <strong> · Link locked: reissue required</strong>}
+        </dd>
+        <dt>Upload link</dt>
+        <dd>
+          {r.link ? `${r.link.state}, valid until ${when(r.link.expiresAt)}` : 'None'}
+        </dd>
+      </dl>
+      {canReissue && (
+        <form method="post" action={`/requests/${r.id}/reissue`}>
+          <button type="submit">Reissue link</button> The current link stops working.
+        </form>
+      )}
+      {canClose && (
+        <form method="post" action={`/requests/${r.id}/close`}>
+          <button type="submit">Close request</button>
+        </form>
+      )}
+      <h2>Documents</h2>
+      <p>None yet.</p>
+    </Layout>
+  )
+}
+
 export function requestRoutes(deps: Deps) {
   const context = (
     user: User,
@@ -87,6 +154,31 @@ export function requestRoutes(deps: Deps) {
     now: deps.now(),
   })
   const linkUrl = (token: string) => `${deps.config.baseUrl.origin}/u/${token}`
+
+  /** Loads the request named in the URL and asks the policy; any refusal comes back as a response. */
+  const forRequest = async (
+    id: string,
+    action: Action,
+    user: User,
+    request: Request,
+    server: Parameters<typeof sourceIp>[1]
+  ): Promise<{ refusal: Response } | { req: RequestDetail; ctx: ActionContext }> => {
+    const ctx = context(user, request, server)
+    const parsed = z.uuid().safeParse(id)
+    const req = parsed.success ? await getRequest(deps.db, parsed.data, ctx.now) : null
+    if (!req) return { refusal: notFound() }
+    if (!authorise(user, action, req))
+      return {
+        refusal: await denied(
+          deps,
+          ctx,
+          action,
+          { type: 'request', id: req.id },
+          req.id
+        ),
+      }
+    return { req, ctx }
+  }
 
   return new Elysia()
     .use(requireUser(deps))
@@ -185,5 +277,44 @@ export function requestRoutes(deps: Deps) {
         createRequest(tx, ctx, { bankerId: user!.id, ...form.data })
       )
       return linkIssuedPage(linkUrl(token), requestId)
+    })
+    .get('/requests/:id', async ({ user, params, request, server }) => {
+      const found = await forRequest(params.id, 'request.view', user!, request, server)
+      if ('refusal' in found) return found.refusal
+      const { req, ctx } = found
+      await deps.db.transaction((tx) =>
+        auditAction(tx, ctx, {
+          action: 'request.viewed',
+          target: { type: 'request', id: req.id },
+          requestId: req.id,
+          outcome: 'success',
+        })
+      )
+      return detailPage(req, user!)
+    })
+    .post('/requests/:id/reissue', async ({ user, params, request, server }) => {
+      const found = await forRequest(
+        params.id,
+        'request.reissue',
+        user!,
+        request,
+        server
+      )
+      if ('refusal' in found) return found.refusal
+      const { req, ctx } = found
+      const result = await deps.db.transaction((tx) => reissueLink(tx, ctx, req.id))
+      if ('conflict' in result) return conflict()
+      return linkIssuedPage(linkUrl(result.token), req.id)
+    })
+    .post('/requests/:id/close', async ({ user, params, request, server }) => {
+      const found = await forRequest(params.id, 'request.close', user!, request, server)
+      if ('refusal' in found) return found.refusal
+      const { req, ctx } = found
+      const result = await deps.db.transaction((tx) => closeRequest(tx, ctx, req.id))
+      if (result === 'conflict') return conflict()
+      return new Response(null, {
+        status: 303,
+        headers: { location: `/requests/${req.id}` },
+      })
     })
 }

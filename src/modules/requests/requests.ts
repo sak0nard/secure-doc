@@ -1,11 +1,17 @@
-import { desc, eq, sql } from 'drizzle-orm'
+import { and, desc, eq, sql } from 'drizzle-orm'
 import type { Db, Tx } from '../../db/client'
 import { customers, documentType, requests, uploadLinks, users } from '../../db/schema'
 import { authorise } from '../access/policy'
 import type { User } from '../access/sessions'
 import { type ActionContext, auditAction } from '../audit/audit'
-import { issueLink } from './links'
-import { type DisplayStatus, displayStatus } from './status'
+import { issueLink, tokenHashPrefix } from './links'
+import {
+  type DisplayStatus,
+  displayStatus,
+  type LinkState,
+  maskMobile,
+  type StoredStatus,
+} from './status'
 
 export const DOCUMENT_TYPES = documentType.enumValues
 export type DocumentType = (typeof DOCUMENT_TYPES)[number]
@@ -43,6 +49,68 @@ export async function createRequest(
   return { requestId, token }
 }
 
+/** The one stored status each change may start from. Pages read it to decide which buttons to show. */
+export const CHANGE_ALLOWED_FROM = { reissue: 'open', close: 'received' } as const
+
+/** Locks the request row, so concurrent changes to the same request queue behind each other. */
+async function lockStatus(tx: Tx, requestId: string): Promise<StoredStatus | null> {
+  const [row] = await tx
+    .select({ status: requests.status })
+    .from(requests)
+    .where(eq(requests.id, requestId))
+    .for('update')
+  return row?.status ?? null
+}
+
+/** Revokes the request's active link, if any, and issues a new one. Only while open. */
+export async function reissueLink(
+  tx: Tx,
+  ctx: ActionContext,
+  requestId: string
+): Promise<{ token: string } | { conflict: true }> {
+  if ((await lockStatus(tx, requestId)) !== CHANGE_ALLOWED_FROM.reissue)
+    return { conflict: true }
+  const revoked = await tx
+    .update(uploadLinks)
+    .set({ state: 'revoked' })
+    .where(and(eq(uploadLinks.requestId, requestId), eq(uploadLinks.state, 'active')))
+    .returning({ id: uploadLinks.id, tokenHash: uploadLinks.tokenHash })
+  for (const link of revoked)
+    await auditAction(tx, ctx, {
+      action: 'link.revoked',
+      target: { type: 'link', id: link.id },
+      requestId,
+      outcome: 'success',
+      detail: { tokenHashPrefix: tokenHashPrefix(link.tokenHash) },
+    })
+  const { token } = await issueLink(tx, ctx, requestId)
+  await tx
+    .update(requests)
+    .set({ updatedAt: ctx.now })
+    .where(eq(requests.id, requestId))
+  return { token }
+}
+
+/** Received → Closed. */
+export async function closeRequest(
+  tx: Tx,
+  ctx: ActionContext,
+  requestId: string
+): Promise<'closed' | 'conflict'> {
+  if ((await lockStatus(tx, requestId)) !== CHANGE_ALLOWED_FROM.close) return 'conflict'
+  await tx
+    .update(requests)
+    .set({ status: 'closed', updatedAt: ctx.now })
+    .where(eq(requests.id, requestId))
+  await auditAction(tx, ctx, {
+    action: 'request.closed',
+    target: { type: 'request', id: requestId },
+    requestId,
+    outcome: 'success',
+  })
+  return 'closed'
+}
+
 /**
  * The link that decides a request's display status: its active link if it has one,
  * otherwise the most recently issued.
@@ -61,6 +129,57 @@ function currentLinks(db: Db | Tx) {
       desc(uploadLinks.issuedAt)
     )
     .as('current_link')
+}
+
+const currentLink = (state: LinkState | null, expiresAt: Date | null) =>
+  state && expiresAt ? { state, expiresAt } : null
+
+export type RequestDetail = {
+  id: string
+  bankerId: string
+  customer: { name: string; maskedMobile: string }
+  documentTypes: DocumentType[]
+  stored: StoredStatus
+  status: DisplayStatus
+  link: { state: LinkState; expiresAt: Date } | null
+  createdAt: Date
+}
+
+/** One request with its current link, or null if there is no such request. */
+export async function getRequest(
+  db: Db | Tx,
+  id: string,
+  now: Date
+): Promise<RequestDetail | null> {
+  const link = currentLinks(db)
+  const [row] = await db
+    .select({
+      id: requests.id,
+      bankerId: requests.bankerId,
+      customerName: customers.name,
+      mobile: customers.mobile,
+      documentTypes: requests.documentTypes,
+      status: requests.status,
+      createdAt: requests.createdAt,
+      linkState: link.state,
+      linkExpiresAt: link.expiresAt,
+    })
+    .from(requests)
+    .innerJoin(customers, eq(customers.id, requests.customerId))
+    .leftJoin(link, eq(link.requestId, requests.id))
+    .where(eq(requests.id, id))
+  if (!row) return null
+  const current = currentLink(row.linkState, row.linkExpiresAt)
+  return {
+    id: row.id,
+    bankerId: row.bankerId,
+    customer: { name: row.customerName, maskedMobile: maskMobile(row.mobile) },
+    documentTypes: row.documentTypes,
+    stored: row.status,
+    status: displayStatus(row.status, current, now),
+    link: current,
+    createdAt: row.createdAt,
+  }
 }
 
 export type RequestSummary = {
@@ -104,12 +223,6 @@ export async function listRequests(
       documentTypes: r.documentTypes,
       createdAt: r.createdAt,
       bankerName: r.bankerName,
-      status: displayStatus(
-        r.status,
-        r.linkState && r.linkExpiresAt
-          ? { state: r.linkState, expiresAt: r.linkExpiresAt }
-          : null,
-        now
-      ),
+      status: displayStatus(r.status, currentLink(r.linkState, r.linkExpiresAt), now),
     }))
 }

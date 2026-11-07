@@ -150,3 +150,203 @@ test('compliance home has no new-request button', async () => {
   expect(await home(SEED.users.carol)).not.toContain('href="/requests/new"')
   expect(await home(SEED.users.alice)).toContain('href="/requests/new"')
 })
+
+const linksFor = (requestId: string) =>
+  appDb.select().from(uploadLinks).where(eq(uploadLinks.requestId, requestId))
+
+const reissue = (app: App, requestId: string, cookie: string) =>
+  post(app, `/requests/${requestId}/reissue`, {}, { cookie })
+
+const close = (app: App, requestId: string, cookie: string) =>
+  post(app, `/requests/${requestId}/close`, {}, { cookie })
+
+const markReceived = (requestId: string) =>
+  appDb.update(requests).set({ status: 'received' }).where(eq(requests.id, requestId))
+
+const storedStatus = async (requestId: string) =>
+  (await appDb.select().from(requests).where(eq(requests.id, requestId)))[0]!.status
+
+test('the owning banker sees the detail page, and the view is audited', async () => {
+  const { app } = testApp()
+  const { requestId, cookie } = await createRequestVia(app)
+  const res = await get(app, `/requests/${requestId}`, { cookie })
+  expect(res.status).toBe(200)
+  const html = await bodyText(res)
+  expect(html).toContain('Dana Customer')
+  expect(html).toContain('+•••••••••01')
+  expect(html).not.toContain('+61400000101')
+  const viewed = await eventsNamed('request.viewed')
+  expect(viewed).toHaveLength(1)
+  expect(viewed[0]).toMatchObject({
+    actorId: SEED.users.alice,
+    requestId,
+    outcome: 'success',
+  })
+})
+
+test('another banker is denied the detail page, and the attempt is logged', async () => {
+  const { app } = testApp()
+  const { requestId } = await createRequestVia(app)
+  const res = await get(app, `/requests/${requestId}`, {
+    cookie: await signIn(app, SEED.users.bob),
+  })
+  expect(res.status).toBe(403)
+  expect(await bodyText(res)).toContain("You don't have access to this.")
+  const denied = await eventsNamed('access.denied')
+  expect(denied).toHaveLength(1)
+  expect(denied[0]).toMatchObject({
+    actorId: SEED.users.bob,
+    requestId,
+    outcome: 'denied',
+    detail: { action: 'request.view' },
+  })
+  expect(await eventsNamed('request.viewed')).toHaveLength(0)
+})
+
+test('compliance can view any request', async () => {
+  const { app } = testApp()
+  const { requestId } = await createRequestVia(app)
+  const res = await get(app, `/requests/${requestId}`, {
+    cookie: await signIn(app, SEED.users.carol),
+  })
+  expect(res.status).toBe(200)
+})
+
+test('malformed or unknown request ids are 404', async () => {
+  const { app } = testApp()
+  const cookie = await signIn(app, SEED.users.alice)
+  for (const id of ['not-a-uuid', crypto.randomUUID()]) {
+    expect((await get(app, `/requests/${id}`, { cookie })).status).toBe(404)
+    expect((await reissue(app, id, cookie)).status).toBe(404)
+    expect((await close(app, id, cookie)).status).toBe(404)
+  }
+})
+
+test('reissue revokes the old link and shows the new one once', async () => {
+  const { app } = testApp()
+  const { requestId, token, cookie } = await createRequestVia(app)
+  const res = await reissue(app, requestId, cookie)
+  expect(res.status).toBe(200)
+  const fresh = linkToken(await res.text())
+  expect(fresh).toBeTruthy()
+  expect(fresh).not.toBe(token)
+
+  const links = await linksFor(requestId)
+  expect(links.filter((l) => l.state === 'active').map((l) => l.tokenHash)).toEqual([
+    sha256Hex(fresh!),
+  ])
+  expect(links.find((l) => l.tokenHash === sha256Hex(token))!.state).toBe('revoked')
+  const actions = (await eventsForRequest(requestId)).map((e) => e.action)
+  expect(actions).toEqual([
+    'request.created',
+    'link.issued',
+    'link.revoked',
+    'link.issued',
+  ])
+  const detail = await get(app, `/requests/${requestId}`, { cookie })
+  expect(await detail.text()).not.toContain(fresh!)
+})
+
+test('another banker and compliance cannot reissue', async () => {
+  const { app } = testApp()
+  const { requestId, token } = await createRequestVia(app)
+  for (const user of [SEED.users.bob, SEED.users.carol]) {
+    const res = await reissue(app, requestId, await signIn(app, user))
+    expect(res.status).toBe(403)
+  }
+  const denied = await eventsNamed('access.denied')
+  expect(denied.map((e) => [e.actorId, e.detail])).toEqual([
+    [SEED.users.bob, { action: 'request.reissue' }],
+    [SEED.users.carol, { action: 'request.reissue' }],
+  ])
+  const links = await linksFor(requestId)
+  expect(links).toHaveLength(1)
+  expect(links[0]).toMatchObject({ state: 'active', tokenHash: sha256Hex(token) })
+})
+
+test('two reissues at once leave one active link', async () => {
+  const { app } = testApp()
+  const { requestId, cookie } = await createRequestVia(app)
+  const results = await Promise.all([
+    reissue(app, requestId, cookie),
+    reissue(app, requestId, cookie),
+  ])
+  expect(results.map((r) => r.status)).toEqual([200, 200])
+  const links = await linksFor(requestId)
+  expect(links).toHaveLength(3)
+  expect(links.filter((l) => l.state === 'active')).toHaveLength(1)
+})
+
+test('reissuing an expired request makes it Open again', async () => {
+  let now = new Date('2026-11-07T00:00:00Z')
+  const { app } = testApp({ now: () => now })
+  const { requestId } = await createRequestVia(app)
+  // Sign in afresh each time: the sign-in session is shorter-lived than the link.
+  const statusOnHome = async () => {
+    const cookie = await signIn(app, SEED.users.alice)
+    const html = await (await get(app, '/', { cookie })).text()
+    return html.match(/<td>(Open|Expired|Received|Closed)/)?.[1]
+  }
+  expect(await statusOnHome()).toBe('Open')
+  now = new Date(now.getTime() + 72 * 3600_000)
+  expect(await statusOnHome()).toBe('Expired')
+  const cookie = await signIn(app, SEED.users.alice)
+  expect((await reissue(app, requestId, cookie)).status).toBe(200)
+  expect(await statusOnHome()).toBe('Open')
+})
+
+test('reissue and close are refused in the wrong state', async () => {
+  const { app } = testApp()
+  const { requestId, cookie } = await createRequestVia(app)
+  const refused = await close(app, requestId, cookie)
+  expect(refused.status).toBe(409)
+  expect(await bodyText(refused)).toContain(
+    "This request can't be changed in its current state."
+  )
+
+  await markReceived(requestId)
+  expect((await reissue(app, requestId, cookie)).status).toBe(409)
+  const closed = await close(app, requestId, cookie)
+  expect(closed.status).toBe(303)
+  expect(closed.headers.get('location')).toBe(`/requests/${requestId}`)
+  expect(await storedStatus(requestId)).toBe('closed')
+  const events = await eventsNamed('request.closed')
+  expect(events).toHaveLength(1)
+  expect(events[0]).toMatchObject({ actorId: SEED.users.alice, requestId })
+
+  expect((await close(app, requestId, cookie)).status).toBe(409)
+  expect(await eventsNamed('request.closed')).toHaveLength(1)
+})
+
+test('compliance can close a received request', async () => {
+  const { app } = testApp()
+  const { requestId } = await createRequestVia(app)
+  await markReceived(requestId)
+  const res = await close(app, requestId, await signIn(app, SEED.users.carol))
+  expect(res.status).toBe(303)
+  expect(await storedStatus(requestId)).toBe('closed')
+})
+
+test('another banker cannot close, and the attempt is logged', async () => {
+  const { app } = testApp()
+  const { requestId } = await createRequestVia(app)
+  await markReceived(requestId)
+  const res = await close(app, requestId, await signIn(app, SEED.users.bob))
+  expect(res.status).toBe(403)
+  expect(await storedStatus(requestId)).toBe('received')
+  expect((await eventsNamed('access.denied'))[0]!.detail).toEqual({
+    action: 'request.close',
+  })
+})
+
+test('a locked link is flagged on the list and the detail page', async () => {
+  const { app } = testApp()
+  const { requestId, cookie } = await createRequestVia(app)
+  await appDb
+    .update(uploadLinks)
+    .set({ state: 'locked' })
+    .where(eq(uploadLinks.requestId, requestId))
+  expect(await (await get(app, '/', { cookie })).text()).toContain('Link locked')
+  const detail = await (await get(app, `/requests/${requestId}`, { cookie })).text()
+  expect(detail).toContain('Link locked: reissue required')
+})
