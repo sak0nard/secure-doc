@@ -53,6 +53,11 @@ test("detail survives a jsonb round trip", async () => {
   expect(await verifyChain(appDb)).toEqual({ ok: true, count: 1 });
 });
 
+test("detail values with a JSON form, such as dates, still verify", async () => {
+  await append(ev(1, { detail: { expiresAt: new Date("2026-11-10T00:00:00.000Z"), skipped: undefined } }));
+  expect(await verifyChain(appDb)).toEqual({ ok: true, count: 1 });
+});
+
 test("concurrent appends never fork the chain", async () => {
   await Promise.all(Array.from({ length: 25 }, (_, n) => append(ev(n))));
   expect(await verifyChain(appDb)).toEqual({ ok: true, count: 25 });

@@ -14,7 +14,7 @@ The tests run against real Postgres and RustFS in Docker, not in-memory fakes. T
 
 | Check | Result |
 | --- | --- |
-| `bun test` | 45 pass, 0 fail (5 files, 103 assertions) |
+| `bun test` | 46 pass, 0 fail (5 files, 104 assertions) |
 | `bun run typecheck` | No type errors |
 
 ## What the tests prove so far
@@ -45,6 +45,7 @@ The tests run against real Postgres and RustFS in Docker, not in-memory fakes. T
 - The first event links to the genesis hash (64 zeros).
 - Each event links to the one before, and the chain verifies.
 - `detail` with keys in any order, nested objects and numbers still verifies after Postgres stores it as `jsonb`.
+- `detail` holding values with a JSON form, such as dates, still verifies.
 - 25 concurrent appends produce one unbroken chain, never a fork.
 - An action that fails after writing its audit event leaves no event.
 - Editing an event is detected at that event (AC-9).

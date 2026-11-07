@@ -74,7 +74,8 @@ export async function appendAudit(tx: Tx, e: AuditInput): Promise<{ seq: number;
     requestId: e.requestId ?? null,
     sourceIp: e.sourceIp,
     outcome: e.outcome,
-    detail: e.detail ?? {},
+    // Hash the detail as jsonb will store it (dates as strings, undefined dropped), so verify sees the same value.
+    detail: JSON.parse(JSON.stringify(e.detail ?? {})) as Record<string, unknown>,
     prevHash: last?.hash ?? GENESIS,
   };
   const hash = hashOf(row);
