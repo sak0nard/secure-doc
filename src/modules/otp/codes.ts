@@ -1,4 +1,5 @@
-import { and, eq, isNull } from 'drizzle-orm'
+import { timingSafeEqual } from 'node:crypto'
+import { and, desc, eq, gt, isNull, sql } from 'drizzle-orm'
 import type { Db, Tx } from '../../db/client'
 import { customers, otpCodes, requests, uploadLinks } from '../../db/schema'
 import type { SmsSender } from '../../ports/sms'
@@ -117,4 +118,85 @@ export async function sendCode(
   await opts.sms.send(tx, { to: link.mobile, body: smsBody(code), linkId })
   await audit('otp.sent', 'success', { codesSent })
   return { sent: true, maskedMobile: maskMobile(link.mobile) }
+}
+
+export const MAX_FAILED_CODE_ATTEMPTS = 5
+
+/**
+ * Checks a submitted code against the link's newest live code. A miss of any kind (wrong,
+ * expired, already used, none sent, malformed) counts against the link, across resends;
+ * the fifth locks it. Locks the link row first, so concurrent guesses cannot exceed five.
+ * The caller must have checked the link is usable under the same lock.
+ */
+export async function verifyCode(
+  tx: Tx,
+  ctx: ActionContext,
+  linkId: string,
+  submitted: string,
+  pepper: string
+): Promise<'verified' | 'wrong' | 'locked'> {
+  const [link] = await tx
+    .select({ requestId: uploadLinks.requestId })
+    .from(uploadLinks)
+    .where(eq(uploadLinks.id, linkId))
+    .for('update')
+  if (!link) throw new Error(`no link ${linkId}`)
+  const audit = (
+    action: string,
+    outcome: 'success' | 'failure' | 'suspicious',
+    detail?: Record<string, unknown>
+  ) =>
+    auditAction(tx, ctx, {
+      action,
+      target: { type: 'link', id: linkId },
+      requestId: link.requestId,
+      outcome,
+      detail,
+    })
+
+  const live = /^\d{6}$/.test(submitted)
+    ? await tx
+        .select({ id: otpCodes.id, codeHash: otpCodes.codeHash })
+        .from(otpCodes)
+        .where(
+          and(
+            eq(otpCodes.linkId, linkId),
+            isNull(otpCodes.consumedAt),
+            gt(otpCodes.expiresAt, ctx.now)
+          )
+        )
+        .orderBy(desc(otpCodes.expiresAt))
+        .limit(1)
+    : []
+  const code = live[0]
+  if (code && hexEqual(code.codeHash, hashCode(pepper, linkId, submitted))) {
+    await tx
+      .update(otpCodes)
+      .set({ consumedAt: ctx.now })
+      .where(eq(otpCodes.id, code.id))
+    await audit('otp.verified', 'success')
+    return 'verified'
+  }
+
+  const [counted] = await tx
+    .update(uploadLinks)
+    .set({ failedCodeAttempts: sql`${uploadLinks.failedCodeAttempts} + 1` })
+    .where(eq(uploadLinks.id, linkId))
+    .returning({ attempts: uploadLinks.failedCodeAttempts })
+  const attempts = counted!.attempts
+  await audit('otp.verify_failed', 'failure', { attempts })
+  if (attempts < MAX_FAILED_CODE_ATTEMPTS) return 'wrong'
+  await tx
+    .update(uploadLinks)
+    .set({ state: 'locked' })
+    .where(eq(uploadLinks.id, linkId))
+  await audit('otp.locked', 'suspicious', { attempts })
+  return 'locked'
+}
+
+/** Constant-time comparison of two hex digests of the same length. */
+function hexEqual(a: string, b: string): boolean {
+  const x = Buffer.from(a, 'hex')
+  const y = Buffer.from(b, 'hex')
+  return x.length === y.length && timingSafeEqual(x, y)
 }

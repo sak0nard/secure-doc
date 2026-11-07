@@ -157,6 +157,30 @@ export async function createRequestVia(
   return { requestId, token, linkId: link!.id, cookie }
 }
 
+/** The `cs=<token>` cookie a response sets, ready to send back, or null if none is set. */
+export function customerCookie(res: Response): string | null {
+  const value = res.headers.get('set-cookie')?.match(/(?:^|[;,]\s*)cs=([^;]*)/)?.[1]
+  return value ? `cs=${value}` : null
+}
+
+/**
+ * Walks the customer journey up to the upload page: creates a request (as
+ * `createRequestVia`), texts a code, and verifies it. Returns the request, the link and
+ * the customer's session cookie (`cs=…`) for `/u/upload`.
+ */
+export async function customerSessionVia(
+  app: App,
+  opts: Parameters<typeof createRequestVia>[1] = {}
+) {
+  const created = await createRequestVia(app, opts)
+  await post(app, `/u/${created.token}/code`, {})
+  const code = await latestOutboxCode(created.linkId)
+  const res = await post(app, `/u/${created.token}/verify`, { code: code ?? '' })
+  const cs = customerCookie(res)
+  if (res.status !== 303 || !cs) throw new Error(`verify failed: ${res.status}`)
+  return { ...created, customerCookie: cs }
+}
+
 /** The 6-digit code in the newest mock SMS for a link, as the customer's phone shows it. */
 export async function latestOutboxCode(linkId: string): Promise<string | null> {
   const [row] = await appDb

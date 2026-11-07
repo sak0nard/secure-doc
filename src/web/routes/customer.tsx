@@ -1,9 +1,16 @@
 import { Elysia } from 'elysia'
+import { z } from 'zod'
 import type { Tx } from '../../db/client'
 import type { Deps } from '../../deps'
 import { sha256Hex } from '../../modules/access/crypto'
 import { type ActionContext, appendAudit } from '../../modules/audit/audit'
-import { linkForCustomer, sendCode } from '../../modules/otp/codes'
+import { linkForCustomer, sendCode, verifyCode } from '../../modules/otp/codes'
+import {
+  CUSTOMER_COOKIE,
+  CUSTOMER_SESSION_TTL_MS,
+  createCustomerSession,
+  resolveCustomerSession,
+} from '../../modules/otp/sessions'
 import {
   REFUSED_LINK_TEXT,
   resolveLink,
@@ -11,11 +18,33 @@ import {
 } from '../../modules/requests/links'
 import { sourceIp } from '../http'
 import { Layout, page, types } from '../render'
+import { readCookie } from '../session'
 
 const SEND_REFUSED_TEXT = {
   limit: 'Too many codes requested; contact your banker.',
   cooldown: 'Please wait a moment before requesting another code.',
 } as const
+const WRONG_CODE_TEXT =
+  "That code didn't work. Check it and try again, or request a new code."
+const LOCKED_TEXT =
+  'Too many incorrect codes. This link is now locked; contact your banker.'
+const SESSION_ENDED_TEXT =
+  'Your upload session has ended. Open the link from your banker again.'
+
+/** Anything that is not a string becomes "", which then counts as a wrong code. */
+const VerifyForm = z.object({ code: z.string() })
+
+function message(title: string, text: string, status: number) {
+  return page(
+    <Layout title={title}>
+      <p>{text}</p>
+    </Layout>,
+    { status }
+  )
+}
+
+/** What `/u/upload` returns without a valid customer session. */
+export const sessionEndedPage = () => message('Session ended', SESSION_ENDED_TEXT, 403)
 
 /** The same page for every unusable link: unknown, used, revoked, locked or expired. */
 export function refusedLinkPage() {
@@ -69,6 +98,13 @@ function codePage(token: string, notice: string, status = 200) {
 
 /** Customer pages. No account: the link token in the URL is the only credential. */
 export function customerRoutes(deps: Deps) {
+  const secure = deps.config.baseUrl.protocol === 'https:' ? '; Secure' : ''
+  const sessionCookie = (token: string) =>
+    `${CUSTOMER_COOKIE}=${token}; HttpOnly; SameSite=Strict; Path=/u; Max-Age=${CUSTOMER_SESSION_TTL_MS / 1000}${secure}`
+  /** The customer's upload session from the `cs` cookie, or null if there is none or it ended. */
+  const customerSession = (request: Request) =>
+    resolveCustomerSession(deps.db, readCookie(request, CUSTOMER_COOKIE), deps.now())
+
   /**
    * Runs `fn` in a transaction holding the link's row lock, so the link stays usable while
    * `fn` acts on it. An unusable link gets the generic refusal; the real reason goes to the
@@ -132,4 +168,34 @@ export function customerRoutes(deps: Deps) {
         return codePage(params.token, SEND_REFUSED_TEXT[result.reason], 429)
       })
     )
+    .post('/u/:token/verify', ({ params, body, request, server }) =>
+      withLink(params.token, request, server, async (tx, ctx, linkId) => {
+        const form = VerifyForm.safeParse(body)
+        const submitted = form.success ? form.data.code : ''
+        const outcome = await verifyCode(
+          tx,
+          ctx,
+          linkId,
+          submitted,
+          deps.config.otpPepper
+        )
+        if (outcome === 'wrong') return codePage(params.token, WRONG_CODE_TEXT, 400)
+        if (outcome === 'locked') return message('Link locked', LOCKED_TEXT, 403)
+        const { token } = await createCustomerSession(tx, linkId, ctx.now)
+        return new Response(null, {
+          status: 303,
+          headers: { location: '/u/upload', 'set-cookie': sessionCookie(token) },
+        })
+      })
+    )
+    .get('/u/upload', async ({ request }) => {
+      const session = await customerSession(request)
+      if (!session) return sessionEndedPage()
+      // Placeholder until the upload flow replaces this page.
+      return page(
+        <Layout title="Upload your documents">
+          <h1>Upload your documents</h1>
+        </Layout>
+      )
+    })
 }
