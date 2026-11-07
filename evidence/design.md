@@ -25,9 +25,11 @@ src/
     access/   sign-in sessions and the single authorisation policy
     audit/    hash-chained append and verification; the only way to write an audit event
     requests/ requests, upload links, and the derived status shown to people
+    otp/      one-time codes (send, resend limits, verify, lockout) and customer upload sessions
+  ports/      interfaces to external services, with their local adapters (SMS → outbox table)
   db/         schema, migrations, seed
   config.ts   validated configuration
-  deps.ts     everything external (config, db, clock, logger), built once and swapped in tests
+  deps.ts     everything external (config, db, SMS, clock, logger), built once and swapped in tests
 ```
 
 - Routes parse input and call module functions; they do not contain business rules.
@@ -81,7 +83,7 @@ Customer (phone) ─────┘    (server-rendered     ├── Object sto
   - scanning: mock → real scanner
   - identity: mock sign-in → OIDC
 
-**Status:** configuration, the data model, the database protections, HTTP hardening, sign-in, the audit chain, the authorisation policy, and requests with their upload links (create, list, detail, reissue, close, and the refusal of unusable links) are built. The rest of this document describes the agreed design for what comes next.
+**Status:** configuration, the data model, the database protections, HTTP hardening, sign-in, the audit chain, the authorisation policy, and requests with their upload links (create, list, detail, reissue, close, and the refusal of unusable links), and one-time codes with the customer upload session are built. The rest of this document describes the agreed design for what comes next.
 
 ## Data flow
 
@@ -112,20 +114,20 @@ Customer (phone) ─────┘    (server-rendered     ├── Object sto
 
 ## Security and privacy
 
-| Threat                                           | Control                                                                                                                                                             | Status                                                                      |
-| ------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------- |
-| Database leak exposes live links or sessions     | Tokens stored only as SHA-256; codes as keyed HMAC-SHA-256                                                                                                          | Built for user sessions and links; designed for codes and customer sessions |
-| Stolen or forwarded link                         | The code is sent to the mobile on file, never the channel that carried the link. Links are single-use, expire in 72 hours, and are revoked on reissue               | Built: expiry and revocation on reissue. Designed: the code and single use  |
-| Guessing tokens or codes                         | 256-bit tokens; a link locks after 5 wrong codes; at most 3 codes per link, 30 seconds apart                                                                        | Designed                                                                    |
-| Token leaking through the Referer header or logs | `Referrer-Policy: no-referrer` on every response; tokens masked in request logs                                                                                     | Built                                                                       |
-| Cross-site request forgery                       | `SameSite=Strict` cookies, plus an `Origin` check on every state-changing request                                                                                   | Built                                                                       |
-| Cross-site scripting                             | React escapes all output; the content security policy allows no inline scripts and no framing                                                                       | Built                                                                       |
-| Internal details leaking in errors               | Generic error pages; details only in the server log                                                                                                                 | Built                                                                       |
-| Spoofed client IP in the audit log               | `X-Forwarded-For` is used only when the proxy is trusted, and only the entry the proxy added                                                                        | Built                                                                       |
-| Malicious upload                                 | Type checked from file contents, not the name; 10 MB limit; scan step; random storage keys; files always served as downloads, never rendered on the portal's domain | Designed                                                                    |
-| Insider browsing documents                       | One authorisation policy: the requesting banker and compliance only. Every view and every refusal audited                                                           | Built for requests; designed for documents                                  |
-| Audit tampering                                  | SHA-256 hash chain over every event field (canonical JSON), plus database permissions and a trigger that block edits and deletes                                    | Built                                                                       |
-| Keeping data too long                            | Retention date recorded on every file (purge job out of scope)                                                                                                      | Designed                                                                    |
+| Threat                                           | Control                                                                                                                                                             | Status                                                                  |
+| ------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------- |
+| Database leak exposes live links or sessions     | Tokens stored only as SHA-256; codes as keyed HMAC-SHA-256                                                                                                          | Built                                                                   |
+| Stolen or forwarded link                         | The code is sent to the mobile on file, never the channel that carried the link. Links are single-use, expire in 72 hours, and are revoked on reissue               | Built: the code, expiry and revocation on reissue. Designed: single use |
+| Guessing tokens or codes                         | 256-bit tokens; a link locks after 5 wrong codes; at most 3 codes per link, 30 seconds apart                                                                        | Built                                                                   |
+| Token leaking through the Referer header or logs | `Referrer-Policy: no-referrer` on every response; tokens masked in request logs                                                                                     | Built                                                                   |
+| Cross-site request forgery                       | `SameSite=Strict` cookies, plus an `Origin` check on every state-changing request                                                                                   | Built                                                                   |
+| Cross-site scripting                             | React escapes all output; the content security policy allows no inline scripts and no framing                                                                       | Built                                                                   |
+| Internal details leaking in errors               | Generic error pages; details only in the server log                                                                                                                 | Built                                                                   |
+| Spoofed client IP in the audit log               | `X-Forwarded-For` is used only when the proxy is trusted, and only the entry the proxy added                                                                        | Built                                                                   |
+| Malicious upload                                 | Type checked from file contents, not the name; 10 MB limit; scan step; random storage keys; files always served as downloads, never rendered on the portal's domain | Designed                                                                |
+| Insider browsing documents                       | One authorisation policy: the requesting banker and compliance only. Every view and every refusal audited                                                           | Built for requests; designed for documents                              |
+| Audit tampering                                  | SHA-256 hash chain over every event field (canonical JSON), plus database permissions and a trigger that block edits and deletes                                    | Built                                                                   |
+| Keeping data too long                            | Retention date recorded on every file (purge job out of scope)                                                                                                      | Designed                                                                |
 
 **Privacy:**
 
@@ -133,6 +135,18 @@ Customer (phone) ─────┘    (server-rendered     ├── Object sto
 - Customer mobile numbers are shown masked, except the last two digits.
 - Audit details never contain tokens, codes or file contents.
 - Original file names are kept for display only and never used to store or serve files.
+
+## One-time codes
+
+- **Keyed hash:** a code is 6 digits from a CSPRNG (rejection sampling keeps it uniform, leading zeros kept). Only `HMAC-SHA-256(OTP_PEPPER, linkId + ":" + code)` is stored. A plain SHA-256 of a 6-digit code could be reversed by trying all 10⁶ values; the key stops that, and binding the link id makes a hash useless for any other link. Verification compares hashes in constant time.
+- **Lifetime:** a code works once, and only before 5 minutes have passed (at exactly 5 minutes it has expired). Sending a new code retires every earlier one.
+- **Resend limits:** at most 3 codes per link, at least 30 seconds apart. A refused send returns 429 with a plain message and writes `otp.send_refused` with the reason (`limit` or `cooldown`). A double tap on "Text me a code" sends one code.
+- **Lockout across resends:** every failed verification (wrong, expired, already used, none sent, or malformed input of any length) adds one to the link's counter, whichever code it was aimed at. The fifth sets the link to `locked` and writes `otp.locked` with outcome `suspicious`. After that the link gets the generic refusal, and the banker sees "Link locked" and reissues; the new link starts with a fresh allowance.
+- **Row lock for concurrency:** each code request opens one transaction, locks the link row (`SELECT … FOR UPDATE`), checks the link is still usable, and only then acts and writes its audit events. Concurrent requests for one link queue, so ten simultaneous wrong guesses stop at exactly five with one `otp.locked` event, and the limits cannot overshoot. The link lock is always taken before the audit lock, matching reissue, so the two cannot deadlock.
+- **Customer session:** a correct code starts a 15-minute session. The cookie `cs` holds a random 256-bit token (only its SHA-256 is stored) and is `HttpOnly; SameSite=Strict; Path=/u`, plus `Secure` over https. `Path=/u` keeps it off staff pages. A session works only while it is unended, unexpired, and its link is still active and unexpired, so reissuing or locking the link ends it at once.
+- **Outbox as the mock SMS channel:** the SMS sender is an interface. The local adapter inserts the message into the `outbox` table inside the same transaction that records the code, so a code is never counted as sent without its message. `/dev/outbox` shows those messages and exists only when `MOCK_OUTBOX_ENABLED=true`. The outbox is the one place a raw code is stored, because it stands in for the customer's phone.
+
+Customer events (`otp.sent`, `otp.send_refused`, `otp.verified`, `otp.verify_failed`, `otp.locked`) have the link as actor (`customer`) and target, and carry the request id. Their details hold counts and reasons only, never a code.
 
 ## Audit chain
 
@@ -150,6 +164,7 @@ Audited actions so far:
 - Requests: `request.created`, `request.viewed` (each time the detail page is shown) and `request.closed`.
 - Links: `link.issued`, `link.revoked` (on reissue, before the new link's `link.issued`) and `link.refused` (an unusable link was opened; the real reason is recorded here only).
 - Refusals: `access.denied`, with the action that was refused.
+- One-time codes: `otp.sent`, `otp.send_refused`, `otp.verified`, `otp.verify_failed` and `otp.locked` (outcome `suspicious`).
 
 Link events carry the first 8 hex characters of the token's hash for correlation, never the token.
 

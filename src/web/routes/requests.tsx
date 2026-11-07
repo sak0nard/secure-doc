@@ -20,15 +20,8 @@ import {
 import { type DisplayStatus, maskMobile } from '../../modules/requests/status'
 import { denied } from '../deny'
 import { sourceIp } from '../http'
-import { Layout, page } from '../render'
+import { DOCUMENT_LABELS, Layout, page, types } from '../render'
 import { requireUser } from '../session'
-
-const DOCUMENT_LABELS: Record<DocumentType, string> = {
-  payslip: 'Payslip',
-  bank_statement: 'Bank statement',
-  photo_id: 'Photo ID',
-  other: 'Other',
-}
 
 /** Checkboxes arrive as a string for one value and an array for several. */
 const CreateForm = z.object({
@@ -41,7 +34,6 @@ const CreateForm = z.object({
     .transform((types) => [...new Set(types)]),
 })
 
-const types = (t: DocumentType[]) => t.map((d) => DOCUMENT_LABELS[d]).join(', ')
 const when = (d: Date) => `${d.toISOString().slice(0, 16).replace('T', ' ')} UTC`
 
 function StatusLabel({ status }: { status: DisplayStatus }) {

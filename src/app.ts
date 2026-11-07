@@ -3,6 +3,7 @@ import type { Deps } from './deps'
 import { maskTokens, originAllowed, SECURITY_HEADERS } from './web/http'
 import { STYLESHEET } from './web/render'
 import { customerRoutes } from './web/routes/customer'
+import { devRoutes } from './web/routes/dev'
 import { loginRoutes } from './web/routes/login'
 import { requestRoutes } from './web/routes/requests'
 
@@ -49,6 +50,7 @@ export function createApp(deps: Deps) {
     })
     .use(loginRoutes(deps))
     .use(customerRoutes(deps))
+    .use(deps.config.mockOutboxEnabled ? devRoutes(deps) : new Elysia())
     .use(requestRoutes(deps))
 }
 

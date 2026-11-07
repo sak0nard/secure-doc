@@ -12,10 +12,10 @@ The tests run against real Postgres and RustFS in Docker, not in-memory fakes. T
 
 ## Latest results
 
-| Check               | Result                                     |
-| ------------------- | ------------------------------------------ |
-| `bun test`          | 101 pass, 0 fail (9 files, 260 assertions) |
-| `bun run typecheck` | No type errors                             |
+| Check               | Result                                       |
+| ------------------- | -------------------------------------------- |
+| `bun test`          | 127 pass, 0 fail (11 files, 1389 assertions) |
+| `bun run typecheck` | No type errors                               |
 
 ## What the tests prove so far
 
@@ -101,6 +101,29 @@ The tests run against real Postgres and RustFS in Docker, not in-memory fakes. T
 - Refusal events hold an 8-character hash prefix, never the token.
 - Link pages, valid or refused, send `Referrer-Policy: no-referrer`.
 
+**One-time codes and customer sessions** (`tests/otp-units.test.ts`, `tests/otp.test.ts`)
+
+- Codes are six digits and keep leading zeros. Random values that would bias the distribution are rejected and redrawn. 1,000 real codes are all six digits.
+- The stored code hash depends on the link and on the pepper, and is an HMAC, not a plain SHA-256.
+- Opening a valid link offers "Text me a code" with the masked mobile and sends nothing.
+- Requesting a code texts the mobile on the customer's record with the agreed wording. The stored hash matches the code, and the code appears in no `otp_codes` row and no audit event. One `otp.sent` event has the link as actor and the request id.
+- A second code within 30 seconds is refused (429, `otp.send_refused` with reason `cooldown`, no message sent); at exactly 30 seconds it is sent. This also covers a double tap.
+- A fourth code is refused (429, reason `limit`).
+- A reissued link cannot request codes; it gets the generic refusal.
+- `/dev/outbox` shows sent codes when the mock is enabled and is 404 otherwise.
+- The correct code redirects to the upload page and sets `cs` with `HttpOnly`, `SameSite=Strict`, `Path=/u` and a 15-minute `Max-Age`; `Secure` is added only over https. Only the SHA-256 of the session token is stored, and `otp.verified` is written.
+- A code works only once; a second use counts as a wrong attempt.
+- A code works just before 5 minutes and is expired at exactly 5 minutes; a new code then works.
+- A new code replaces the previous one.
+- AC-6: four wrong codes get "didn't work" (400); the fifth gets the locked page (403). The link is `locked`, there is exactly one `otp.locked` event with outcome `suspicious`, and five `otp.verify_failed` events. Afterwards even the correct code gets the generic refusal, recorded as `link.refused` with reason `locked`, and the banker's list shows "Link locked".
+- Wrong attempts count across resends: three, then a new code, then two more lock the link.
+- Ten simultaneous wrong guesses stop at exactly five attempts and one `otp.locked` event, with no 500.
+- Empty, 5-digit, 7-digit, alphabetic and 5,000-character codes, and a missing field, count as wrong attempts and never error.
+- `/u/upload` without a cookie or with a garbage cookie gets 403 with the "session has ended" page.
+- The upload session works just before 15 minutes and has ended at exactly 15 minutes.
+- Reissuing the link ends an upload session started on the old link.
+- After a lockout and a reissue, the new link can send and verify a code.
+
 ## Acceptance criteria
 
 | Acceptance criterion                                                     | Status                                                                                                                                                      |
@@ -110,7 +133,7 @@ The tests run against real Postgres and RustFS in Docker, not in-memory fakes. T
 | A renamed executable with a .pdf extension is rejected                   | Not yet built                                                                                                                                               |
 | A file over 10 MB is rejected                                            | Not yet built                                                                                                                                               |
 | A used, expired or reissued link is refused                              | Partly met: "AC-5: a reissued (revoked) link is refused", "AC-5: an expired link is refused". The used case comes with uploads                              |
-| Five wrong codes lock the link and log a suspicious-activity event       | Not yet built                                                                                                                                               |
+| Five wrong codes lock the link and log a suspicious-activity event       | Met: "AC-6: five wrong codes lock the link and log a suspicious-activity event"                                                                             |
 | Another banker gets access denied, and the attempt is logged             | Partly met for request pages: "another banker is denied the detail page, and the attempt is logged". Documents come later                                   |
 | Compliance can view the document and the full audit trail                | Not yet built                                                                                                                                               |
 | Editing or deleting an audit event breaks the hash chain and is detected | Met: "AC-9: editing an audit event is detected", "AC-9: editing an event and recomputing its hash is detected", "AC-9: deleting an audit event is detected" |
