@@ -58,7 +58,7 @@ A trigger also rejects any `UPDATE` or `DELETE` on `audit_events`, even from the
 
 - The app writes one line per request to stdout: `METHOD path status duration`, for example `POST /login 303 12ms`.
 - Customer link tokens are masked: `/u/<token>` is logged as `/u/****`.
-- Who did what is recorded in the audit log (`audit_events`), not in request logs. Sign-in, failed sign-in and sign-out are audited today. To read one request's events in order:
+- Who did what is recorded in the audit log (`audit_events`), not in request logs. Sign-in, request and link changes, request views, refused links and denied access are audited today. To read one request's events in order:
 
   ```bash
   psql "$DATABASE_URL" -c "select seq, at, actor_type, actor_id, action, outcome, source_ip
@@ -69,8 +69,19 @@ A trigger also rejects any `UPDATE` or `DELETE` on `audit_events`, even from the
 
 ## Status
 
-- The signed-in home page shows who you are and your role.
-- Request status (Open, Received, Closed, and Expired worked out from the link) will appear in the request list.
+- The signed-in home page shows who you are, your role, and the requests you may see: a banker sees their own, compliance sees all.
+- Each request shows one of these labels:
+
+| Label       | Meaning                                                                    | What the banker does                                                         |
+| ----------- | -------------------------------------------------------------------------- | ---------------------------------------------------------------------------- |
+| Open        | The customer's link is usable and nothing has been submitted yet           | Wait, or remind the customer through the usual channel                       |
+| Expired     | Still open, but the link has passed its expiry                             | Reissue the link from the request page and send the new link to the customer |
+| Link locked | Shown with Open: too many wrong codes were entered, so the link was locked | Check with the customer, then reissue                                        |
+| Received    | The customer has submitted documents                                       | Review the documents, then close the request                                 |
+| Closed      | Finished                                                                   | Nothing                                                                      |
+
+- A reissued link replaces the old one at once; the old link shows the customer the generic "no longer valid" page.
+- A lost link can't be shown again. Reissue it.
 - `/dev/outbox` (only with `MOCK_OUTBOX_ENABLED=true`) will show mock SMS messages.
 
 ## Failure modes

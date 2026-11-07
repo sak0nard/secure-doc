@@ -2,7 +2,9 @@ import { Elysia } from 'elysia'
 import type { Deps } from './deps'
 import { maskTokens, originAllowed, SECURITY_HEADERS } from './web/http'
 import { STYLESHEET } from './web/render'
+import { customerRoutes } from './web/routes/customer'
 import { loginRoutes } from './web/routes/login'
+import { requestRoutes } from './web/routes/requests'
 
 export function createApp(deps: Deps) {
   const started = new WeakMap<Request, number>()
@@ -46,6 +48,8 @@ export function createApp(deps: Deps) {
       return STYLESHEET
     })
     .use(loginRoutes(deps))
+    .use(customerRoutes(deps))
+    .use(requestRoutes(deps))
 }
 
 export type App = ReturnType<typeof createApp>

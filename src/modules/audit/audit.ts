@@ -19,6 +19,9 @@ export type AuditInput = {
   detail?: Record<string, unknown>
 }
 
+/** Who is acting, from where, and when: what every audited domain function needs. */
+export type ActionContext = { actor: AuditInput['actor']; ip: string; now: Date }
+
 export type ChainResult =
   | { ok: true; count: number }
   | {
@@ -93,6 +96,15 @@ export async function appendAudit(
     .values({ ...row, hash })
     .returning({ seq: auditEvents.seq })
   return { seq: inserted!.seq, hash }
+}
+
+/** `appendAudit` with the actor, IP and time taken from the action's context. */
+export function auditAction(
+  tx: Tx,
+  ctx: ActionContext,
+  e: Omit<AuditInput, 'at' | 'actor' | 'sourceIp'>
+) {
+  return appendAudit(tx, { ...e, at: ctx.now, actor: ctx.actor, sourceIp: ctx.ip })
 }
 
 /** Walks the log in order and reports the first event whose link or content does not check out. */
