@@ -22,12 +22,26 @@ Downloads are always served as attachments, with a content type taken from the d
 
 **Spec:** `docs/superpowers/specs/2026-11-07-secure-doc-portal-design.md` (§6.4 scan gating; §6.5 policy; §6.6 verification; §6.7 download headers; §7 routes; §9 AC-7/AC-8 rows)
 
-**Depends on chunks 3–5** (merged before this runs; use the landed names and ledger any difference):
+**Depends on chunks 3–5 (merged; use these exact names):**
 
-- `authorise`, `Action`, `denied(deps, ctx, action, target, requestId?)`
-- `getRequest`, `ActionContext`, `auditAction`, `verifyChain`
-- `ObjectStore.get`, `listDocuments`
-- Test helpers: `signIn`, `createRequestVia`, `bodyText`, `tamperAsOwner`, and chunk 5's helper for a verified session plus upload
+- Access and audit:
+  - `src/modules/access/policy.ts`: `authorise(user, action, request?)`, `Action`
+  - `src/web/deny.tsx`: `denied(deps, ctx, action, target, requestId?)`
+  - `src/modules/audit/audit.ts`: `ActionContext`, `auditAction(tx, ctx, e)`, `appendAudit`, `verifyChain`
+- Requests:
+  - `src/modules/requests/requests.ts`: `getRequest(db, id, now) → RequestDetail | null` (with `bankerId`), `DOCUMENT_LABELS`
+  - `src/web/routes/requests.tsx`: `detailPage(r, docs, user)` renders the `DocumentList` table (type, file, format, size, uploaded, scan). Add the download links there.
+- Documents:
+  - `src/modules/documents/documents.ts`: `DocumentSummary` (`id`, `documentType`, `originalFilename`, `detectedType`, `sizeBytes`, `sha256`, `scanStatus`, `uploadedAt`, `retentionUntil`). It deliberately has **no `storageKey`**; the new `getDocument` reads it by document id. `listDocuments(db, requestId)` returns the oldest upload first.
+  - `src/modules/documents/checks.ts`: `CONTENT_TYPES: Record<DetectedType, string>`. Use it for the download `Content-Type`; don't build a second map. Also `DetectedType`.
+  - `src/ports/storage.ts`: `ObjectStore.get(key) → Uint8Array | null`. `Deps.storage` is in place.
+- Test helpers:
+  - `tests/helpers.ts`: `signIn`, `createRequestVia`, `customerSessionVia`, `bodyText`, `tamperAsOwner`, `latestOutboxCode`, and `testStore` (the real store on the test bucket; `testApp()` uses it by default).
+  - `tests/fixtures.ts`: `pdf()`, `png()`, `jpeg()`, `exe()`.
+  - **Add** `uploadedRequestVia(app, opts?) → { requestId, cookie, documentIds }` to `tests/helpers.ts`. It runs `customerSessionVia` and then posts multipart to `/u/upload`. Move the `upload(app, cs, parts)` helper from `tests/uploads.test.ts` into `tests/helpers.ts` and reuse it there. The document ids come from `listDocuments(appDb, requestId)`.
+- **Behaviour to keep:**
+  - **Lock order:** row locks come before the first audit write.
+  - **CSRF check:** `post()` in tests sends a same-site `Origin`. The CSRF check also accepts `Origin: null` with `Sec-Fetch-Site: same-origin`, which is what real browsers send here.
 
 ## Global Constraints
 
@@ -37,7 +51,7 @@ Downloads are always served as attachments, with a content type taken from the d
   - `scanStatus !== "clean"`: 409 with the body `This document is still being checked.`
   - Row present but object missing: 404 with `This document isn't available.`, logged as `ERROR` with the document id (no file name).
 - **Download response:**
-  - `Content-Type` from `detectedType` (`application/pdf`, `image/png`, `image/jpeg`).
+  - `Content-Type` from `CONTENT_TYPES[detectedType]`.
   - `Content-Disposition: attachment; filename="{safe}"; filename*=UTF-8''{encoded}`.
   - `X-Content-Type-Options: nosniff`, plus the global headers.
 - **Safe file name:**
@@ -107,7 +121,7 @@ evidence/*.md                         (modify)
   - `"strips path separators"`: `("../../etc/passwd.pdf", "pdf")` contains no `/` or `\`.
   - `"falls back when nothing safe is left"`: `("<<>>.pdf", "pdf")` → `"____.pdf"`, and `("", "png")` → `"document.png"`.
   - `"caps the length"`: a 500-character base → at most 80 characters plus the extension.
-- [ ] **Step 2: Write failing route tests** in `tests/download.test.ts` (set up via chunk 5's verified-session and upload helpers: Alice's request for Dana with one `pdf()` payslip):
+- [ ] **Step 2: Write failing route tests** in `tests/download.test.ts` (set up with `uploadedRequestVia`: Alice's request for Dana with one `pdf()` payslip):
   - `"the requesting banker downloads the document as an attachment"`:
     - → 200, and the body bytes equal the uploaded bytes.
     - `content-type` is `application/pdf`; `content-disposition` starts with `attachment; filename="`; `x-content-type-options` is `nosniff`.
