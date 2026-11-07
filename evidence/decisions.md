@@ -41,6 +41,8 @@ Short records of the choices that shape the portal. Each says what was decided, 
 
 Appends are serialised with a Postgres advisory lock so concurrent events can't fork the chain. Each event is written in the same transaction as the change it records.
 
+Verification reports the first broken event and why (edited content, or a broken link to the event before it). The tamper tests act as a privileged attacker: as the owner, with the trigger disabled inside their own transaction, so the trigger itself is never weakened.
+
 **Why:**
 - The chain makes tampering *detectable*, and the permissions and trigger make it *hard*.
 - Writing the event in the same transaction means there is never an action without its event, or an event for an action that rolled back.

@@ -58,7 +58,12 @@ A trigger also rejects any `UPDATE` or `DELETE` on `audit_events`, even from the
 
 - The app writes one line per request to stdout: `METHOD path status duration`, for example `POST /login 303 12ms`.
 - Customer link tokens are masked: `/u/<token>` is logged as `/u/****`.
-- Who did what is recorded in the audit log, not in request logs.
+- Who did what is recorded in the audit log (`audit_events`), not in request logs. Sign-in, failed sign-in and sign-out are audited today. To read one request's events in order:
+
+  ```bash
+  psql "$DATABASE_URL" -c "select seq, at, actor_type, actor_id, action, outcome, source_ip
+    from audit_events where request_id = '<request id>' order by seq"
+  ```
 - Unexpected errors are logged as `ERROR METHOD path: message`, with the path masked the same way, and the client gets a generic 500 page.
 
 ## Status

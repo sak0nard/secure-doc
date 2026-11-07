@@ -22,6 +22,7 @@ src/
   web/        HTTP only: routes, pages, cookies, security headers, CSRF check
   modules/    domain rules; each module owns its tables
     access/   sign-in sessions and (later) the single authorisation policy
+    audit/    hash-chained append and verification; the only way to write an audit event
   db/         schema, migrations, seed
   config.ts   validated configuration
   deps.ts     everything external (config, db, clock, logger), built once and swapped in tests
@@ -76,7 +77,7 @@ Customer (phone) ─────┘    (server-rendered     ├── Object sto
   - scanning: mock → real scanner
   - identity: mock sign-in → OIDC
 
-**Status:** configuration, the data model, the database protections, HTTP hardening and sign-in are built. The rest of this document describes the agreed design for what comes next.
+**Status:** configuration, the data model, the database protections, HTTP hardening, sign-in and the audit chain are built. The rest of this document describes the agreed design for what comes next.
 
 ## Data flow
 
@@ -119,7 +120,7 @@ Customer (phone) ─────┘    (server-rendered     ├── Object sto
 | Spoofed client IP in the audit log | `X-Forwarded-For` is used only when the proxy is trusted, and only the entry the proxy added | Built |
 | Malicious upload | Type checked from file contents, not the name; 10 MB limit; scan step; random storage keys; files always served as downloads, never rendered on the portal's domain | Designed |
 | Insider browsing documents | One authorisation policy: the requesting banker and compliance only. Every view and every refusal audited | Designed |
-| Audit tampering | Hash chain, plus database permissions and a trigger that block edits and deletes | Database protections built; chain designed |
+| Audit tampering | SHA-256 hash chain over every event field (canonical JSON), plus database permissions and a trigger that block edits and deletes | Built |
 | Keeping data too long | Retention date recorded on every file (purge job out of scope) | Designed |
 
 **Privacy:**
@@ -127,6 +128,18 @@ Customer (phone) ─────┘    (server-rendered     ├── Object sto
 - Customer mobile numbers are shown masked, except the last two digits.
 - Audit details never contain tokens, codes or file contents.
 - Original file names are kept for display only and never used to store or serve files.
+
+## Audit chain
+
+- **Hashed fields:** every column except `seq` and `hash`: `at` (ISO-8601), `actorType`, `actorId`, `action`, `targetType`, `targetId`, `requestId`, `sourceIp`, `outcome`, `detail` and `prevHash`. Each event's `hash` is `sha256(prevHash + canonicalJson(fields))`.
+- **Genesis:** the first event's `prevHash` is 64 zeros.
+- **Canonical JSON:** keys sorted at every depth, no whitespace, arrays in order. Postgres `jsonb` reorders keys, so the hash must not depend on storage order.
+- **Stored time is hashed time:** the app sets `at`, not a database default, so the stored value is the hashed value.
+- **One writer at a time:** each append takes a Postgres transaction-scoped advisory lock, reads the latest hash, then inserts. Concurrent appends queue instead of forking the chain.
+- **Same transaction:** an event commits or rolls back with the action it records. A failed sign-in changes nothing else, so its event gets a transaction of its own.
+- **Verification** walks the events in order. It reports "intact, N events", or the first broken event and why: its content was edited (`hash_mismatch`), or it no longer links to the event before it (`link_mismatch`, after a deletion, a reorder or a recomputed hash).
+
+The first audited actions are sign-in (`user.signed_in`), failed sign-in (`user.sign_in_failed`) and sign-out (`user.signed_out`). Later actions follow the same pattern.
 
 ## Key trade-offs
 

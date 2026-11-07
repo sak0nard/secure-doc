@@ -14,7 +14,7 @@ The tests run against real Postgres and RustFS in Docker, not in-memory fakes. T
 
 | Check | Result |
 | --- | --- |
-| `bun test` | 28 pass, 0 fail (4 files, 74 assertions) |
+| `bun test` | 45 pass, 0 fail (5 files, 103 assertions) |
 | `bun run typecheck` | No type errors |
 
 ## What the tests prove so far
@@ -39,6 +39,18 @@ The tests run against real Postgres and RustFS in Docker, not in-memory fakes. T
 - Unexpected errors return a generic 500 page. The details go to the server log, never to the client.
 - The client IP ignores `X-Forwarded-For` unless the proxy is trusted. When it is trusted, the IP comes from the entry the proxy appended, not from a value the client supplied.
 
+**Audit chain** (`tests/audit.test.ts`)
+- Canonical JSON sorts keys at every depth.
+- An empty log verifies.
+- The first event links to the genesis hash (64 zeros).
+- Each event links to the one before, and the chain verifies.
+- `detail` with keys in any order, nested objects and numbers still verifies after Postgres stores it as `jsonb`.
+- 25 concurrent appends produce one unbroken chain, never a fork.
+- An action that fails after writing its audit event leaves no event.
+- Editing an event is detected at that event (AC-9).
+- Editing an event and recomputing its hash is detected at the next event (AC-9).
+- Deleting an event is detected at the next event (AC-9).
+
 **Sign-in and sessions** (`tests/login.test.ts`)
 - Sign-in sets an `HttpOnly`, `SameSite=Strict` cookie and lands on the home page.
 - Only the SHA-256 of the session token is stored.
@@ -47,6 +59,10 @@ The tests run against real Postgres and RustFS in Docker, not in-memory fakes. T
 - Unknown or malformed user ids are rejected with 400 and no cookie.
 - User-supplied text is escaped in pages.
 - Request logs record the real status of redirects.
+- Sign-in, failed sign-in and sign-out are each audited. A failed sign-in creates no session, and a malformed user id is recorded as `invalid`.
+- Signing out without a session writes no event.
+- Behind a trusted proxy, the audit event records the client IP the proxy saw.
+- The chain stays intact across sign-in activity.
 
 ## Acceptance criteria
 
@@ -60,7 +76,7 @@ The tests run against real Postgres and RustFS in Docker, not in-memory fakes. T
 | Five wrong codes lock the link and log a suspicious-activity event | Not yet built |
 | Another banker gets access denied, and the attempt is logged | Not yet built |
 | Compliance can view the document and the full audit trail | Not yet built |
-| Editing or deleting an audit event breaks the hash chain and is detected | Partly: edits and deletes are blocked at the database. Chain verification is not yet built |
+| Editing or deleting an audit event breaks the hash chain and is detected | Met: "AC-9: editing an audit event is detected", "AC-9: editing an event and recomputing its hash is detected", "AC-9: deleting an audit event is detected" |
 
 Each criterion will get its own named test.
 
