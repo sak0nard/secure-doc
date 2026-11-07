@@ -74,7 +74,8 @@ function badForm() {
   )
 }
 
-function message(title: string, text: string, status: number) {
+/** A one-line page for signed-in users, with the way back to their requests. */
+export function message(title: string, text: string, status: number) {
   return page(
     <Layout title={title}>
       <p>{text}</p>

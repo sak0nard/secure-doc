@@ -11,7 +11,6 @@ import { exe, jpeg, pdf, sized } from './fixtures'
 import {
   appDb,
   bodyText,
-  config,
   customerSessionVia,
   get,
   post,
@@ -19,34 +18,17 @@ import {
   signIn,
   testApp,
   testStore,
+  type Part,
+  upload,
 } from './helpers'
 
 beforeEach(resetDb)
 
 type App = ReturnType<typeof testApp>['app']
-type Part = { field: string; name: string; bytes: Uint8Array; type?: string }
-
 const MB = 1024 * 1024
 const THANKS = 'Thank you. Your documents have been sent to your banker.'
 const SESSION_ENDED = 'Your upload session has ended.'
 const OUTAGE = "We couldn't process your files right now. Please try again."
-
-/** Posts files as a browser would: one multipart part per file, named by its input. */
-function upload(app: App, cs: string, parts: Part[]) {
-  const form = new FormData()
-  for (const p of parts)
-    form.append(
-      p.field,
-      new File([p.bytes], p.name, { type: p.type ?? 'application/octet-stream' })
-    )
-  return app.handle(
-    new Request(new URL('/u/upload', config.baseUrl).toString(), {
-      method: 'POST',
-      headers: { origin: config.baseUrl.origin, cookie: cs },
-      body: form,
-    })
-  )
-}
 
 const payslip = (bytes = pdf(), name = 'payslip.pdf'): Part => ({
   field: 'payslip',

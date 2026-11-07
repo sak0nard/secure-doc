@@ -2,6 +2,7 @@ import { desc, eq, sql } from 'drizzle-orm'
 import { loadConfig } from '../src/config'
 import { createDb, type Tx } from '../src/db/client'
 import { outbox, uploadLinks } from '../src/db/schema'
+import { listDocuments } from '../src/modules/documents/documents'
 import { SEED, seed } from '../src/db/seed'
 import { createApp } from '../src/app'
 import type { Deps } from '../src/deps'
@@ -10,6 +11,7 @@ import { alwaysClean } from '../src/ports/scanner'
 import { outboxSms } from '../src/ports/sms'
 import { s3Store } from '../src/ports/storage'
 import type { DocumentType } from '../src/modules/requests/requests'
+import { pdf } from './fixtures'
 
 export const config = loadConfig(process.env)
 export const ownerDb = createDb(config.databaseOwnerUrl)
@@ -196,4 +198,49 @@ export async function latestOutboxCode(linkId: string): Promise<string | null> {
     .orderBy(desc(outbox.createdAt))
     .limit(1)
   return row?.body.match(/\b(\d{6})\b/)?.[1] ?? null
+}
+
+/** One file in a multipart upload: `field` is the input it is posted under (its document type). */
+export type Part = { field: string; name: string; bytes: Uint8Array; type?: string }
+
+/** Posts files to `/u/upload` as a browser would: one multipart part per file, named by its input. */
+export function upload(app: App, cs: string, parts: Part[]) {
+  const form = new FormData()
+  for (const p of parts)
+    form.append(
+      p.field,
+      new File([p.bytes], p.name, { type: p.type ?? 'application/octet-stream' })
+    )
+  return app.handle(
+    new Request(url('/u/upload'), {
+      method: 'POST',
+      headers: { origin: config.baseUrl.origin, cookie: cs },
+      body: form,
+    })
+  )
+}
+
+/**
+ * Walks the whole customer journey (default: Alice for Dana, one payslip) and uploads one
+ * `pdf()` per requested type. Returns the request, the banker's cookie and the new
+ * documents' ids, oldest first.
+ */
+export async function uploadedRequestVia(
+  app: App,
+  opts: Parameters<typeof createRequestVia>[1] = {}
+): Promise<{ requestId: string; cookie: string; documentIds: string[] }> {
+  const s = await customerSessionVia(app, opts)
+  const types = opts.documentTypes ?? ['payslip']
+  const res = await upload(
+    app,
+    s.customerCookie,
+    types.map((t) => ({ field: t, name: `${t}.pdf`, bytes: pdf() }))
+  )
+  if (res.status !== 200) throw new Error(`upload failed: ${res.status}`)
+  const docs = await listDocuments(appDb, s.requestId)
+  return {
+    requestId: s.requestId,
+    cookie: s.cookie,
+    documentIds: docs.map((d) => d.id),
+  }
 }
