@@ -3,6 +3,7 @@
 ## Summary
 
 **Harness**
+
 - Claude Code + Opus 5.5 / Sonnet 5.5
 - [Superpowers](https://github.com/obra/superpowers) (spec-driven development workflow)
 
